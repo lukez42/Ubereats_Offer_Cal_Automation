@@ -51,7 +51,7 @@ GM_addStyle(`
     }
 `);
 
-(function() {
+(function () {
     'use strict';
 
     // --- 1. A global store to hold the data we intercept ---
@@ -77,7 +77,7 @@ GM_addStyle(`
 
     // Helper to wait for an element to disappear
     function waitForElementToDisappear(selector, timeout = 5000) {
-         return new Promise((resolve) => {
+        return new Promise((resolve) => {
             const intervalTime = 100;
             let totalTime = 0;
             const interval = setInterval(() => {
@@ -103,7 +103,7 @@ GM_addStyle(`
                 // Look for the Close button with aria-label="Close" - this is the most reliable indicator
                 const closeButtons = document.querySelectorAll('button[aria-label="Close"]');
                 console.log(`[UberEats Script] waitForDrawerOpen: Found ${closeButtons.length} Close buttons`);
-                
+
                 for (const closeBtn of closeButtons) {
                     // Check if the close button is actually visible
                     if (closeBtn.offsetParent !== null) {
@@ -125,7 +125,7 @@ GM_addStyle(`
                         }
                     }
                 }
-                
+
                 totalTime += intervalTime;
                 if (totalTime >= timeout) {
                     console.log(`[UberEats Script] waitForDrawerOpen: Timeout after ${timeout}ms`);
@@ -170,13 +170,13 @@ GM_addStyle(`
             if (typeof PointerEvent === 'function') {
                 element.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, pointerType: 'mouse', ...baseEvent }));
             }
-        } catch (_) {}
+        } catch (_) { }
         element.dispatchEvent(new MouseEvent('mousedown', baseEvent));
         try {
             if (typeof PointerEvent === 'function') {
                 element.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, pointerType: 'mouse', ...baseEvent }));
             }
-        } catch (_) {}
+        } catch (_) { }
         element.dispatchEvent(new MouseEvent('mouseup', baseEvent));
         element.dispatchEvent(new MouseEvent('click', baseEvent));
         if (typeof element.click === 'function') {
@@ -190,20 +190,20 @@ GM_addStyle(`
         for (let i = 0; i < attempts; i++) {
             // Try clicking the row itself first, as this is what users do
             const clickable = row;
-            console.log(`[UberEats Script] openDrawerForRow attempt ${i+1}/${attempts}: clicking row`, clickable.tagName);
-            
+            console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: clicking row`, clickable.tagName);
+
             // Use native click on the row
             if (clickable.click) {
                 clickable.click();
             }
-            
-            console.log(`[UberEats Script] openDrawerForRow attempt ${i+1}/${attempts}: waiting for drawer...`);
+
+            console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: waiting for drawer...`);
             lastDrawer = await waitForDrawerOpen(6000);
             if (lastDrawer) {
-                console.log(`[UberEats Script] openDrawerForRow attempt ${i+1}/${attempts}: drawer opened successfully`);
+                console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: drawer opened successfully`);
                 return lastDrawer;
             }
-            console.log(`[UberEats Script] openDrawerForRow attempt ${i+1}/${attempts}: no drawer appeared, retrying...`);
+            console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: no drawer appeared, retrying...`);
             await new Promise(resolve => setTimeout(resolve, 500));
         }
         return lastDrawer;
@@ -226,23 +226,23 @@ GM_addStyle(`
             console.log(`[UberEats Script] extractOfferDataFromDrawer: No drawer provided`);
             return { text: "—", value: 0 };
         }
-        
+
         // Method 1: Look for the div structure with "Offers on items" text
         const allParagraphs = drawer.querySelectorAll('p');
         console.log(`[UberEats Script] extractOfferDataFromDrawer: Found ${allParagraphs.length} paragraphs in drawer`);
-        
+
         // Log first 10 paragraph texts for debugging
         const paragraphTexts = Array.from(allParagraphs).slice(0, 15).map(p => p.textContent.trim());
         console.log(`[UberEats Script] extractOfferDataFromDrawer: First 15 paragraph texts:`, paragraphTexts);
-        
+
         for (const paragraph of allParagraphs) {
             const label = paragraph.textContent ? paragraph.textContent.trim() : "";
             if (!label) continue;
-            
+
             // Look for "Offers on items" (with or without VAT text)
             if (/Offers on items/i.test(label)) {
                 console.log(`[UberEats Script] extractOfferDataFromDrawer: Found "Offers on items" in paragraph: "${label}"`);
-                
+
                 // The value is in a sibling element. Walk up to find the parent container
                 const parentBlock = paragraph.closest('div[data-baseweb="block"]');
                 if (parentBlock) {
@@ -255,7 +255,7 @@ GM_addStyle(`
                         return sanitizeOfferValue(valueText);
                     }
                 }
-                
+
                 // Fallback: look for any paragraph or monoparagraph near this one
                 const nearbyMonoParagraphs = paragraph.parentElement.parentElement.querySelectorAll('p[data-baseweb="typo-monoparagraphmedium"]');
                 for (const monoPara of nearbyMonoParagraphs) {
@@ -267,7 +267,7 @@ GM_addStyle(`
                 }
             }
         }
-        
+
         console.log(`[UberEats Script] extractOfferDataFromDrawer: No "Offers on items" found, returning default`);
         return { text: "—", value: 0 };
     }
@@ -290,45 +290,75 @@ GM_addStyle(`
 
     function extractItemsFromDrawer(drawer) {
         if (!drawer) return [];
-        
+
         const items = [];
-        
-        // Look for item blocks - they have a quantity indicator and item name
-        const itemBlocks = drawer.querySelectorAll('div[data-baseweb="block"]');
-        
-        for (const block of itemBlocks) {
-            // Look for quantity label (e.g., "1", "2")
-            const quantityLabel = block.querySelector('div[data-baseweb="typo-labelsmall"]');
-            if (!quantityLabel) continue;
-            
+        const seenItems = new Set(); // To deduplicate items within the same order
+
+        // Target the accordion headers which contain the main item details.
+        // These are div elements with role="button".
+        const itemHeaders = drawer.querySelectorAll('div[role="button"]');
+
+        for (const header of itemHeaders) {
+            // 1. Get Quantity
+            const quantityLabel = header.querySelector('div[data-baseweb="typo-labelsmall"]');
+            if (!quantityLabel) continue; // Not an item header
+
             const quantityText = quantityLabel.textContent.trim();
             const quantity = parseInt(quantityText);
             if (isNaN(quantity)) continue;
-            
-            // Look for item name - it's in a labelmedium nearby
-            const itemNameEl = block.querySelector('div[data-baseweb="typo-labelmedium"]');
+
+            // 2. Get Item Name
+            const itemNameEl = header.querySelector('div[data-baseweb="typo-labelmedium"]');
             if (!itemNameEl) continue;
-            
+
             const itemName = itemNameEl.textContent.trim();
-            
-            // Look for price - it's in a monoparagraphmedium
-            const priceEl = block.querySelector('p[data-baseweb="typo-monoparagraphmedium"]');
-            const price = priceEl ? priceEl.textContent.trim() : "";
-            
+
+            // 3. Get Price
+            const priceEl = header.querySelector('[data-baseweb="typo-monoparagraphmedium"]');
+            const priceText = priceEl ? priceEl.textContent.trim() : "";
+            const priceValue = parseFloat(priceText.replace(/[^\d.-]/g, ''));
+
+            // 4. Filter out non-food items and modifiers
+            // Skip timestamps
+            if (/^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(itemName)) {
+                continue;
+            }
+
+            // Skip Modifiers and Options
+            if (/^(Spice\s+\d+|No(\s+|$)|Add\s+|Extra\s+|Choose\s+|Option\s+|Cutlery|Napkins|Wheat Noodle|Rice Noodle|Udon Noodle|Sweet Potato Noodle)/i.test(itemName)) {
+                continue;
+            }
+
+            // 5. Filter out items with 0 price (likely modifiers or duplicate headers without price)
+            if (priceValue <= 0) {
+                console.log(`[UberEats Script] extractItemsFromDrawer: Skipping 0-price item: "${itemName}"`);
+                continue;
+            }
+
+            // 6. Deduplication
+            // Prevent counting the same item twice if the DOM has duplicate headers
+            const itemKey = `${itemName}-${priceText}-${quantity}`;
+            if (seenItems.has(itemKey)) {
+                console.log(`[UberEats Script] extractItemsFromDrawer: Skipping duplicate item header: "${itemName}"`);
+                continue;
+            }
+            seenItems.add(itemKey);
+
             items.push({
                 name: itemName,
                 quantity: quantity,
-                price: price
+                price: priceText,
+                priceValue: isNaN(priceValue) ? 0 : priceValue
             });
         }
-        
-        console.log(`[UberEats Script] extractItemsFromDrawer: Found ${items.length} items`, items);
+
+        console.log(`[UberEats Script] extractItemsFromDrawer: Found ${items.length} main items via accordion headers`, items);
         return items;
     }
 
     function extractDateFromDrawer(drawer) {
         if (!drawer) return "";
-        
+
         // Look for date text - it's near the order ID
         const dateParagraphs = drawer.querySelectorAll('div[data-baseweb="block"] p, div[data-baseweb="block"] div[class*="_c1"]');
         for (const el of dateParagraphs) {
@@ -434,15 +464,15 @@ GM_addStyle(`
         // 3. Scroll to load all rows
         const scrollableElement = document.querySelector('.infinite-scroll-component');
         if (!scrollableElement) {
-             Swal.fire('Error', 'Could not find the scrollable order list.', 'error');
-             button.classList.remove('loading');
-             return;
+            Swal.fire('Error', 'Could not find the scrollable order list.', 'error');
+            button.classList.remove('loading');
+            return;
         }
 
         console.log(`[UberEats Script] Starting scroll to load ${totalOrderCount} orders...`);
         console.log(`[UberEats Script] Scrollable element:`, scrollableElement);
         console.log(`[UberEats Script] Initial scrollHeight: ${scrollableElement.scrollHeight}, clientHeight: ${scrollableElement.clientHeight}`);
-        
+
         let allRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
         let lastRowCount = allRows.length;
         let attempts = 0;
@@ -453,7 +483,7 @@ GM_addStyle(`
             attempts++;
             const oldScrollTop = scrollableElement.scrollTop;
             const oldScrollHeight = scrollableElement.scrollHeight;
-            
+
             button.textContent = `Loading... (${allRows.length}/${totalOrderCount})`;
             console.log(`[UberEats Script] Scroll attempt ${attempts}: ${allRows.length}/${totalOrderCount} rows loaded`);
             console.log(`[UberEats Script] Before scroll - scrollTop: ${oldScrollTop}, scrollHeight: ${oldScrollHeight}`);
@@ -461,19 +491,19 @@ GM_addStyle(`
             // Try multiple scroll methods
             // Method 1: Set scrollTop
             scrollableElement.scrollTop = scrollableElement.scrollHeight;
-            
+
             // Method 2: Use scrollTo
             scrollableElement.scrollTo(0, scrollableElement.scrollHeight);
-            
+
             // Method 3: Use scrollIntoView on the last row
             const lastRow = allRows[allRows.length - 1];
             if (lastRow) {
                 lastRow.scrollIntoView({ block: 'end', behavior: 'auto' });
             }
-            
+
             // Method 4: Dispatch wheel event to trigger scroll
             scrollableElement.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
-            
+
             console.log(`[UberEats Script] After scroll - scrollTop: ${scrollableElement.scrollTop}`);
 
             // Wait for loading indicator to appear and disappear
@@ -488,12 +518,12 @@ GM_addStyle(`
                 }
                 console.log(`[UberEats Script] Loading indicator gone or timeout`);
             }
-            
+
             // Wait for new rows to load
             await new Promise(resolve => setTimeout(resolve, 1500));
             updateNewRows();
             allRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
-            
+
             console.log(`[UberEats Script] After wait - scrollHeight: ${scrollableElement.scrollHeight}, rows: ${allRows.length}`);
 
             if (allRows.length === lastRowCount) {
@@ -512,7 +542,7 @@ GM_addStyle(`
         console.log(`[UberEats Script] Finished scrolling. Loaded ${allRows.length} of ${totalOrderCount} orders`);
 
         if (allRows.length < totalOrderCount) {
-             Swal.fire('Loading Warning', `Only found ${allRows.length} of ${totalOrderCount} orders after scrolling. Proceeding with the ${allRows.length} visible orders.`, 'warning');
+            Swal.fire('Loading Warning', `Only found ${allRows.length} of ${totalOrderCount} orders after scrolling. Proceeding with the ${allRows.length} visible orders.`, 'warning');
         }
 
         // 4. All rows are loaded. Now, process them ONE BY ONE.
@@ -557,7 +587,7 @@ GM_addStyle(`
                 const items = extractItemsFromDrawer(drawer);
                 const date = extractDateFromDrawer(drawer);
                 console.log(`[UberEats Script] Row ${i} (${orderId}): Extracted offer="${offer.text}", issue="${issue}", items=${items.length}, date="${date}"`);
-                
+
                 window.orderItemsData[orderId] = items;
                 window.orderDateData[orderId] = date;
             } else {
@@ -593,17 +623,17 @@ GM_addStyle(`
             if (drawer) {
                 // Try multiple ways to find the close button
                 closeButton = drawer.querySelector('button[aria-label="Close"]') ||
-                             Array.from(drawer.querySelectorAll('button')).find(btn => {
-                                 const text = btn.textContent || btn.getAttribute('aria-label') || '';
-                                 return /close/i.test(text);
-                             });
+                    Array.from(drawer.querySelectorAll('button')).find(btn => {
+                        const text = btn.textContent || btn.getAttribute('aria-label') || '';
+                        return /close/i.test(text);
+                    });
             }
             if (!closeButton) {
                 closeButton = document.querySelector('button[aria-label="Close"]') ||
-                             Array.from(document.querySelectorAll('button')).find(btn => {
-                                 const text = btn.textContent || btn.getAttribute('aria-label') || '';
-                                 return /close/i.test(text) && btn.offsetParent !== null;
-                             });
+                    Array.from(document.querySelectorAll('button')).find(btn => {
+                        const text = btn.textContent || btn.getAttribute('aria-label') || '';
+                        return /close/i.test(text) && btn.offsetParent !== null;
+                    });
             }
             if (closeButton) {
                 console.log(`[UberEats Script] Row ${i} (${orderId}): Closing drawer`);
@@ -627,38 +657,13 @@ GM_addStyle(`
 
         // Generate summary by date
         const summaryByDate = {};
-        
+
         for (const orderId of window.processedOrderIds) {
             const offer = window.orderOfferData[orderId];
             const date = window.orderDateData[orderId] || "Unknown Date";
             const items = window.orderItemsData[orderId] || [];
-            
-            if (offer && offer.value > 0) {
-                if (!summaryByDate[date]) {
-                    summaryByDate[date] = {
-                        totalOrders: 0,
-                        ordersWithOffers: 0,
-                        totalOfferSum: 0,
-                        itemCounts: {},
-                        totalDiscountedItems: 0
-                    };
-                }
-                
-                summaryByDate[date].ordersWithOffers++;
-                summaryByDate[date].totalOfferSum += offer.value;
-                
-                // Count items
-                for (const item of items) {
-                    const itemKey = item.name;
-                    if (!summaryByDate[date].itemCounts[itemKey]) {
-                        summaryByDate[date].itemCounts[itemKey] = 0;
-                    }
-                    summaryByDate[date].itemCounts[itemKey] += item.quantity;
-                    summaryByDate[date].totalDiscountedItems += item.quantity;
-                }
-            }
-            
-            // Count all orders for this date
+
+            // Initialize date entry if it doesn't exist
             if (!summaryByDate[date]) {
                 summaryByDate[date] = {
                     totalOrders: 0,
@@ -668,9 +673,34 @@ GM_addStyle(`
                     totalDiscountedItems: 0
                 };
             }
+
+            // Count all orders for this date
             summaryByDate[date].totalOrders++;
+
+            // Only process orders that have offers
+            if (offer && offer.value > 0) {
+                summaryByDate[date].ordersWithOffers++;
+                summaryByDate[date].totalOfferSum += offer.value;
+
+                // Find the item with the highest price in this order
+                if (items.length > 0) {
+                    // Sort items by price value (descending)
+                    const sortedItems = items.sort((a, b) => b.priceValue - a.priceValue);
+                    const highestPricedItem = sortedItems[0];
+
+                    console.log(`[UberEats Script] Order ${orderId}: Highest priced item is "${highestPricedItem.name}" (${highestPricedItem.price}) out of ${items.length} items`);
+
+                    // Only count the highest-priced item
+                    const itemKey = highestPricedItem.name;
+                    if (!summaryByDate[date].itemCounts[itemKey]) {
+                        summaryByDate[date].itemCounts[itemKey] = 0;
+                    }
+                    summaryByDate[date].itemCounts[itemKey] += highestPricedItem.quantity;
+                    summaryByDate[date].totalDiscountedItems += highestPricedItem.quantity;
+                }
+            }
         }
-        
+
         // Build HTML table
         let tableHTML = `
             <div style="text-align: left; max-height: 400px; overflow-y: auto;">
@@ -680,41 +710,39 @@ GM_addStyle(`
                         <tr style="background-color: #f5f5f5; border-bottom: 2px solid #ddd;">
                             <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Date</th>
                             <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Items (Quantity)</th>
-                            <th style="padding: 8px; text-align: center; border: 1px solid #ddd;">Total Items</th>
                             <th style="padding: 8px; text-align: center; border: 1px solid #ddd;">Orders</th>
                             <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Offer Sum</th>
                         </tr>
                     </thead>
                     <tbody>
         `;
-        
+
         // Sort dates
         const sortedDates = Object.keys(summaryByDate).sort();
-        
+
         for (const date of sortedDates) {
             const summary = summaryByDate[date];
-            
+
             // Build items list
             let itemsHTML = '';
             const sortedItems = Object.entries(summary.itemCounts).sort((a, b) => b[1] - a[1]); // Sort by quantity desc
-            
+
             if (sortedItems.length > 0) {
                 itemsHTML = sortedItems.map(([name, qty]) => `${name} (${qty})`).join('<br>');
             } else {
                 itemsHTML = '<em>No items with offers</em>';
             }
-            
+
             tableHTML += `
                 <tr style="border-bottom: 1px solid #ddd;">
                     <td style="padding: 8px; border: 1px solid #ddd; vertical-align: top;"><strong>${date}</strong></td>
                     <td style="padding: 8px; border: 1px solid #ddd; vertical-align: top; font-size: 11px; max-width: 300px;">${itemsHTML}</td>
-                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; vertical-align: top;"><strong>${summary.totalDiscountedItems}</strong></td>
                     <td style="padding: 8px; border: 1px solid #ddd; text-align: center; vertical-align: top;">${summary.ordersWithOffers}/${summary.totalOrders}</td>
                     <td style="padding: 8px; border: 1px solid #ddd; text-align: right; vertical-align: top; color: #DE1135;"><strong>£${summary.totalOfferSum.toFixed(2)}</strong></td>
                 </tr>
             `;
         }
-        
+
         tableHTML += `
                     </tbody>
                 </table>
