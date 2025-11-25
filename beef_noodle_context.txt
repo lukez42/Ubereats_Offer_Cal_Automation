@@ -1,3 +1,0 @@
---- Occurrence 1 at index 428017 ---
-all class="_c0 _c1 _c2 _di _cm">2</div></div></div></div><div data-baseweb=block><div data-baseweb=block class="_qo _ah _af"><div data-baseweb=typo-labelmedium class="_c0 _c1 _c2 _ez _f0 _b6 _b7">(3) Beef Noodle Hotpot Meal with Fried Chicken Strips &amp;Chiddy Sour Plum Soda</div></div></div></div><div data-baseweb=block><div data-baseweb=block class=_j2><p data-baseweb=typo-monoparagraphmedium class="_c0 _te _fh _ez _c4 _b6 _b7">£39.00</p></div></div></div><div class="_i6 _ti _tj _af _au _ah _de"><svg width=20px height=20px viewBox="0 0 24 24" fill=none color=#5E5E5E><path d="M18 11.7v3.8l-6-4.6-6 4.6v-3.8l6-4.6 6 4.6Z" fill=currentColor></path></svg></div></div><div class="_e3 _ch _sb _mv
-
