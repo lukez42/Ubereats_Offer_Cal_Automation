@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.6
+// @version      7.7
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -1866,11 +1866,14 @@ GM_addStyle(`
             return;
         }
 
-        // Look for the "Showing X results" text
+        // Look for the "Showing X results" text AND at least one order row
         const resultsText = findElementByText('div', 'Showing', 'results');
-        if (resultsText && !isInitialized) {
-            log(' Orders page detected, initializing...');
-            addButton(); // Add the button
+        const orderRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
+
+        // Only initialize when BOTH the results text AND at least one order row are present
+        if (resultsText && orderRows.length > 0 && !isInitialized) {
+            log(` Orders page ready: "${resultsText.textContent}" with ${orderRows.length} rows`);
+            addButton(); // Add the button only after orders are visible
             updateNewRows(); // Add cells to rows that are already there
             isInitialized = true;
 
