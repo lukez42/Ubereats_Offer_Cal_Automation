@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.8
+// @version      8.9
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -2076,16 +2076,14 @@ GM_addStyle(`
         Swal.fire({
             title: 'Calculation Complete!',
             html: `
-                <div style="text-align: center; margin-bottom: 20px;">
+                <div style="text-align: center; margin-bottom: 15px;">
                     <h2 style="margin: 0; color: #DE1135;">£${finalTotalOfferSum.toFixed(2)}</h2>
-                    <p style="margin: 5px 0;">Total Offer Sum</p>
-                    <h3 style="margin: 10px 0 0 0; color: #333;">£${finalTotalSubtotalSum.toFixed(2)}</h3>
-                    <p style="margin: 5px 0;">Total Subtotal Sum</p>
-                    <p style="margin: 5px 0; color: #666;">Found <strong>${finalTotalDiscountedItems}</strong> discounted items across <strong>${finalProcessedCount}</strong> processed orders.</p>
-                    <p style="margin: 5px 0; color: #999; font-size: 12px;">(Target was ${totalOrderCount})</p>
+                    <p style="margin: 3px 0; font-size: 13px;">Total Offer Sum</p>
+                    <h3 style="margin: 8px 0 0 0; color: #333;">£${finalTotalSubtotalSum.toFixed(2)}</h3>
+                    <p style="margin: 3px 0; font-size: 13px;">Total Subtotal Sum</p>
+                    <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">${finalTotalDiscountedItems} discounted items · ${finalProcessedCount}/${totalOrderCount} orders</p>
                 </div>
                 ${tableHTML}
-                <p style="margin-top: 20px; font-size: 12px; color: #666;">The "Offer" and "Issue" columns have been populated in the table.</p>
             `,
             icon: 'success',
             width: '800px',
