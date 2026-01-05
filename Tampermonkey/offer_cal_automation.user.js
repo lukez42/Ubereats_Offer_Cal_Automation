@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.7
+// @version      8.8
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -229,6 +229,22 @@ GM_addStyle(`
         }
     }
     
+    /* Animated cycling dots for "Loading more" text */
+    .animated-dots:after {
+        content: '.';
+        animation: dots 1.5s steps(5, end) infinite;
+        display: inline-block;
+        width: 1.5em; /* Reserve space to prevent layout shift */
+        text-align: left;
+    }
+    
+    @keyframes dots {
+        0%, 20% { content: '.'; }
+        40% { content: '..'; }
+        60% { content: '...'; }
+        80%, 100% { content: ''; }
+    }
+    
     /* SVG Progress Ring - shows actual percentage */
     #processing-overlay .progress-ring {
         width: 24px;
@@ -334,17 +350,22 @@ GM_addStyle(`
 
         const textEl = processingOverlay.querySelector('.status-text');
         if (textEl) {
-            textEl.textContent = statusText;
+            textEl.innerHTML = statusText;
         }
 
-        // Update progress ring
-        const progressRing = processingOverlay.querySelector('.progress-ring-fill');
-        if (progressRing && total > 0) {
-            const circumference = 62.83; // 2 * PI * 10 (radius)
-            const progress = current / total;
-            const offset = circumference * (1 - progress);
+        const progressRing = processingOverlay.querySelector('.progress-ring circle:last-child');
+        if (progressRing) {
+            const radius = progressRing.r.baseVal.value;
+            const circumference = 2 * Math.PI * radius;
+            const progress = Math.min(current / total, 1);
+            const offset = circumference - (progress * circumference);
             progressRing.style.strokeDashoffset = offset;
         }
+
+        // Clean log for console (remove HTML tags)
+        const cleanText = statusText.replace(/<[^>]*>/g, '');
+        // Only log significantly different status updates to avoid spam
+        // log(` [UI] ${cleanText}`);
     }
 
     // Update button progress (for non-overlay mode)
@@ -356,11 +377,12 @@ GM_addStyle(`
         const progressFill = button.querySelector('.progress-fill');
 
         if (btnText) {
-            btnText.textContent = `Processing... (${current}/${total})`;
+            // Use innerHTML to support animated dots span
+            btnText.innerHTML = statusText || `Processing... (${current}/${total})`;
         }
 
-        if (progressFill && total > 0) {
-            const progress = current / total;
+        if (progressFill) {
+            const progress = Math.min(current / total, 1);
             progressFill.style.transform = `scaleX(${progress})`;
         }
 
@@ -1639,7 +1661,7 @@ GM_addStyle(`
             if (window.processedOrderIds.size < totalOrderCount) {
                 // Update status to indicate loading
                 const currentCount = window.processedOrderIds.size;
-                const loadingText = `Loading more orders... (${currentCount}/${totalOrderCount})`;
+                const loadingText = `Loading more orders<span class="animated-dots"></span> (${currentCount}/${totalOrderCount})`;
 
                 if (SHOW_PROCESSING_OVERLAY) {
                     updateProcessingStatus(loadingText, currentCount, totalOrderCount);
