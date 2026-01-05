@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.8
+// @version      7.9
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -72,7 +72,7 @@ GM_addStyle(`
         color: #A6A6A6;
     }
 
-    /* === Processing Mode Overlay === */
+    /* === Processing Mode Overlay (GPU-Optimized) === */
     #processing-overlay {
         position: fixed;
         top: 0;
@@ -84,13 +84,16 @@ GM_addStyle(`
         opacity: 0;
         visibility: hidden;
         transition: opacity 0.4s ease, visibility 0.4s ease;
+        /* Force GPU layer for smooth transitions */
+        transform: translateZ(0);
+        -webkit-transform: translateZ(0);
     }
     #processing-overlay.active {
         opacity: 1;
         visibility: visible;
     }
     
-    /* Green glow border using box-shadow (vignette effect) */
+    /* Green glow border - static box-shadow, animated with opacity for performance */
     #processing-overlay .glow-border {
         position: absolute;
         top: 0;
@@ -98,26 +101,37 @@ GM_addStyle(`
         width: 100%;
         height: 100%;
         pointer-events: none;
+        /* Static box-shadow - no animation on this property */
         box-shadow: 
-            inset 0 0 60px rgba(6, 193, 103, 0.4),
-            inset 0 0 120px rgba(6, 193, 103, 0.2),
-            inset 0 0 180px rgba(6, 193, 103, 0.1);
-        animation: glowPulse 2s ease-in-out infinite;
+            inset 0 0 80px rgba(6, 193, 103, 0.5),
+            inset 0 0 150px rgba(6, 193, 103, 0.25),
+            inset 0 0 200px rgba(6, 193, 103, 0.1);
+        /* GPU acceleration */
+        transform: translateZ(0);
+        -webkit-transform: translateZ(0);
+        will-change: opacity;
     }
     
-    @keyframes glowPulse {
-        0%, 100% { 
-            box-shadow: 
-                inset 0 0 60px rgba(6, 193, 103, 0.4),
-                inset 0 0 120px rgba(6, 193, 103, 0.2),
-                inset 0 0 180px rgba(6, 193, 103, 0.1);
-        }
-        50% { 
-            box-shadow: 
-                inset 0 0 80px rgba(6, 193, 103, 0.5),
-                inset 0 0 150px rgba(6, 193, 103, 0.25),
-                inset 0 0 220px rgba(6, 193, 103, 0.15);
-        }
+    /* Pulse layer - animates opacity instead of box-shadow for performance */
+    #processing-overlay .glow-pulse {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        box-shadow: 
+            inset 0 0 100px rgba(6, 193, 103, 0.3),
+            inset 0 0 180px rgba(6, 193, 103, 0.15);
+        animation: glowPulseOptimized 2.5s ease-in-out infinite;
+        transform: translateZ(0);
+        -webkit-transform: translateZ(0);
+        will-change: opacity;
+    }
+    
+    @keyframes glowPulseOptimized {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 0.8; }
     }
     
     /* Click-blocking transparent center */
@@ -136,12 +150,13 @@ GM_addStyle(`
         position: absolute;
         bottom: 80px;
         left: 50%;
-        transform: translateX(-50%);
+        transform: translateX(-50%) translateZ(0);
+        -webkit-transform: translateX(-50%) translateZ(0);
         background: rgba(6, 193, 103, 0.95);
         color: white;
         padding: 12px 24px;
         border-radius: 50px;
-        font-family: UberMoveText, system-ui, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         font-size: 14px;
         font-weight: 500;
         box-shadow: 0 4px 20px rgba(6, 193, 103, 0.4);
@@ -150,7 +165,7 @@ GM_addStyle(`
         gap: 10px;
     }
     
-    /* Spinning loader icon */
+    /* Spinning loader icon - uses transform which is GPU-accelerated */
     #processing-overlay .spinner {
         width: 16px;
         height: 16px;
@@ -158,10 +173,12 @@ GM_addStyle(`
         border-top-color: white;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
+        transform: translateZ(0);
+        -webkit-transform: translateZ(0);
     }
     
     @keyframes spin {
-        to { transform: rotate(360deg); }
+        to { transform: rotate(360deg) translateZ(0); }
     }
 `);
 
@@ -215,6 +232,7 @@ GM_addStyle(`
         overlay.id = 'processing-overlay';
         overlay.innerHTML = `
             <div class="glow-border"></div>
+            <div class="glow-pulse"></div>
             <div class="click-blocker"></div>
             <div class="status-message">
                 <div class="spinner"></div>
