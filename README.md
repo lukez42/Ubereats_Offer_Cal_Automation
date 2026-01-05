@@ -165,6 +165,16 @@ Ubereats_Offer_Cal_Automation/
 | `openDrawerForRow()` | Handles clicking order rows with retry logic |
 | `initializeOnOrdersPage()` | Sets up the button and observers |
 
+## Future Optimizations
+
+Potential improvements for consideration if performance degrades on older devices:
+
+- **Cache DOM selectors** - Reduce repeated `querySelector` calls
+- **Debounce scroll/touch events** - Limit event handler frequency
+- **Low-power mode detection** - Reduce animation complexity automatically
+- **requestAnimationFrame** - Smoother UI updates
+- **Lazy-load SweetAlert2** - Load only when summary popup is needed
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file.
