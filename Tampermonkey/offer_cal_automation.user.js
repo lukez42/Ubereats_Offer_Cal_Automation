@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.9
+// @version      9.0
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -32,6 +32,8 @@ GM_addStyle(`
         transition: transform 0.3s ease, background-color 0.2s, opacity 0.3s ease;
         opacity: 1;
         overflow: hidden; /* For fill animation */
+        /* Performance: Isolate from page layout/paint recalculations */
+        contain: layout style paint;
     }
     #fetch-offer-data-btn.hidden {
         transform: translateY(100px);
@@ -124,6 +126,8 @@ GM_addStyle(`
         /* Force GPU layer for smooth transitions */
         transform: translateZ(0);
         -webkit-transform: translateZ(0);
+        /* Performance: Complete isolation from page layout */
+        contain: strict;
     }
     #processing-overlay.active {
         opacity: 1;
