@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.3
+// @version      8.4
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -172,10 +172,10 @@ GM_addStyle(`
         cursor: not-allowed;
     }
     
-    /* Status message at bottom */
+    /* Status message at bottom - Responsive positioning */
     #processing-overlay .status-message {
         position: absolute;
-        bottom: 80px;
+        bottom: 15vh; /* Use viewport height instead of fixed pixels */
         left: 50%;
         transform: translateX(-50%) translateZ(0);
         -webkit-transform: translateX(-50%) translateZ(0);
@@ -190,6 +190,33 @@ GM_addStyle(`
         display: flex;
         align-items: center;
         gap: 10px;
+        z-index: 100000; /* Ensure text is above everything */
+    }
+    
+    /* Tablet/Landscape optimizations */
+    @media (max-height: 600px) and (orientation: landscape) {
+        #processing-overlay .status-message {
+            bottom: 20vh; /* Raise it higher on short screens */
+            padding: 8px 16px; /* Slightly smaller padding */
+            font-size: 13px;
+        }
+    }
+
+    /* Dark Mode Enhancements for Glow */
+    @media (prefers-color-scheme: dark) {
+        #processing-overlay .glow-border {
+            box-shadow: 
+                inset 0 0 80px rgba(6, 193, 103, 0.8),  /* Increased opacity */
+                inset 0 0 150px rgba(6, 193, 103, 0.5), /* Increased opacity */
+                inset 0 0 200px rgba(6, 193, 103, 0.3); /* Increased opacity */
+            mix-blend-mode: screen; /* Helps glow pop on dark backgrounds */
+        }
+        #processing-overlay .glow-pulse {
+            box-shadow: 
+                inset 0 0 100px rgba(6, 193, 103, 0.6),
+                inset 0 0 180px rgba(6, 193, 103, 0.4);
+            mix-blend-mode: screen;
+        }
     }
     
     /* SVG Progress Ring - shows actual percentage */
