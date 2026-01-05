@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.5
+// @version      7.6
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -95,7 +95,8 @@ GM_addStyle(`
     }
 
     // Startup log (always shown - minimal output for production)
-    console.log('[UberEats Script] v7.3 loaded');
+    const scriptVersion = (typeof GM_info !== 'undefined' && GM_info.script) ? GM_info.script.version : 'unknown';
+    console.log(`[UberEats Script] v${scriptVersion} loaded`);
 
     // --- 1. A global store to hold the data we intercept ---
     window.orderOfferData = {};
@@ -1766,9 +1767,10 @@ GM_addStyle(`
 
         const SCROLL_THRESHOLD = 50; // Minimum scroll distance to trigger hide/show
         let accumulatedDelta = 0;
+        let touchStartY = 0;
 
-        // Use wheel event which works everywhere, including over the table
-        const handleWheel = (e) => {
+        // Handle scroll hiding logic
+        const handleScrollDelta = (delta) => {
             // Don't hide while processing
             if (button.classList.contains('loading')) return;
 
@@ -1778,7 +1780,7 @@ GM_addStyle(`
             }
 
             // Accumulate scroll delta
-            accumulatedDelta += e.deltaY;
+            accumulatedDelta += delta;
 
             if (accumulatedDelta > SCROLL_THRESHOLD) {
                 // Scrolling DOWN - hide button
@@ -1797,9 +1799,28 @@ GM_addStyle(`
             }, 1500);
         };
 
-        // Listen on the main content area and the document
-        scrollContainer.addEventListener('wheel', handleWheel, { passive: true });
+        // Desktop: wheel event
+        const handleWheel = (e) => {
+            handleScrollDelta(e.deltaY);
+        };
+
+        // Mobile/Tablet: touch events
+        const handleTouchStart = (e) => {
+            touchStartY = e.touches[0].clientY;
+        };
+
+        const handleTouchMove = (e) => {
+            if (touchStartY === 0) return;
+            const touchCurrentY = e.touches[0].clientY;
+            const delta = touchStartY - touchCurrentY; // Positive = scrolling down, Negative = scrolling up
+            touchStartY = touchCurrentY; // Update for continuous tracking
+            handleScrollDelta(delta);
+        };
+
+        // Listen on the document for both wheel and touch events
         document.addEventListener('wheel', handleWheel, { passive: true });
+        document.addEventListener('touchstart', handleTouchStart, { passive: true });
+        document.addEventListener('touchmove', handleTouchMove, { passive: true });
     }
 
     // --- Use an observer to add the button and new cells ---
