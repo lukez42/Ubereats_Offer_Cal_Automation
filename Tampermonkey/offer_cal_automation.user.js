@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.3
+// @version      7.4
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -29,11 +29,20 @@ GM_addStyle(`
         font-size: 16px;
         font-weight: 500;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: transform 0.2s, background-color 0.2s;
+        transition: transform 0.3s ease, background-color 0.2s, opacity 0.3s ease;
+        opacity: 1;
+    }
+    #fetch-offer-data-btn.hidden {
+        transform: translateY(100px);
+        opacity: 0;
+        pointer-events: none;
     }
     #fetch-offer-data-btn:hover {
         background-color: #059c52;
         transform: scale(1.05);
+    }
+    #fetch-offer-data-btn.hidden:hover {
+        transform: translateY(100px); /* Keep hidden even on hover */
     }
     #fetch-offer-data-btn:active {
         transform: scale(0.95);
@@ -1731,6 +1740,9 @@ GM_addStyle(`
     }
 
     // --- 6. Function to add the button to the page ---
+    let lastScrollTop = 0;
+    let scrollHideTimeout = null;
+
     function addButton() {
         const heading = document.querySelector('h1[data-baseweb="heading"]');
         if (heading && !document.getElementById('fetch-offer-data-btn')) {
@@ -1739,7 +1751,45 @@ GM_addStyle(`
             button.textContent = 'Fetch Offer Data';
             heading.parentElement.appendChild(button);
             button.addEventListener('click', processOrders);
+
+            // Setup scroll-aware auto-hide behavior
+            setupScrollAutoHide(button);
         }
+    }
+
+    function setupScrollAutoHide(button) {
+        const scrollContainer = document.querySelector('.infinite-scroll-component');
+        if (!scrollContainer) return;
+
+        const SCROLL_THRESHOLD = 10; // Minimum scroll distance to trigger hide/show
+
+        scrollContainer.addEventListener('scroll', () => {
+            // Don't hide while processing
+            if (button.classList.contains('loading')) return;
+
+            const currentScrollTop = scrollContainer.scrollTop;
+            const scrollDelta = currentScrollTop - lastScrollTop;
+
+            // Clear any pending timeout
+            if (scrollHideTimeout) {
+                clearTimeout(scrollHideTimeout);
+            }
+
+            if (scrollDelta > SCROLL_THRESHOLD) {
+                // Scrolling DOWN - hide button
+                button.classList.add('hidden');
+            } else if (scrollDelta < -SCROLL_THRESHOLD) {
+                // Scrolling UP - show button
+                button.classList.remove('hidden');
+            }
+
+            lastScrollTop = currentScrollTop;
+
+            // Auto-show button after 1.5s of no scrolling
+            scrollHideTimeout = setTimeout(() => {
+                button.classList.remove('hidden');
+            }, 1500);
+        }, { passive: true });
     }
 
     // --- Use an observer to add the button and new cells ---
