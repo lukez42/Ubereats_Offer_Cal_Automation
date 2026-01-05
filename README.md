@@ -7,6 +7,11 @@ A Tampermonkey/Violentmonkey userscript that automates the extraction and calcul
 - **Automatic Offer Detection**: Scrapes "Offers on items" data from each order's detail drawer
 - **BOGO Calculation**: Intelligently detects and calculates Buy One Get One promotions
 - **Multi-BOGO Support**: Handles orders with multiple different BOGO items
+- **Active Row Highlight**: Visually tracks progress with a subtle green highlight on the row being processed (Performance optimized for tablets)
+- **Dual-Mode UI**: Choose between an immersive "Overlay Mode" or a subtle "Button Mode" with water-fill progress animation
+- **Tablet Optimized**: Responsive UI that adjusts to different screen sizes and orientations (Landscape/Portrait)
+- **Dark Mode Support**: Enhanced visibility for dark mode users with glowing effects
+- **Smart Loading Feedback**: Animated indicators ("...") show exactly when the script is fetching more data vs. processing
 - **Running Count Columns**: Live tracking of Tofu, Pork, and Beef item counts as orders are processed
 - **Summary by Date**: Aggregates data with breakdown by date, item type, and offer values
 - **SPA Navigation Support**: Works seamlessly when navigating within the Uber Eats portal
@@ -116,6 +121,16 @@ Version updates are tracked in the `@version` header.
 - Quantities are halved (counting BOGO pairs, not total items)
 - Split-line items (same item on multiple lines) are consolidated
 
+## Configuration
+    
+You can customize the script by editing the `const` values at the top of the file:
+    
+| Option | Default | Description |
+|--------|---------|-------------|
+| `SHOW_PROCESSING_OVERLAY` | `true` | **`true`**: Shows full-screen green overlay with progress ring.<br>**`false`**: Shows stats in "Fetch" button + water-fill animation. |
+| `DEBUG` | `false` | Enable detailed console logging for troubleshooting. |
+| `SHOW_DEBUG_COLUMNS` | `false` | Show extra columns in the table for debugging data extraction. |
+    
 ## Development
 
 ### File Structure
