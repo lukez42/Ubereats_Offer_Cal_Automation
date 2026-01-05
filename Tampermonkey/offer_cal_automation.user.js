@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.5
+// @version      8.6
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -1370,6 +1370,7 @@ GM_addStyle(`
         let stuckCount = 0;
         const maxStuckAttempts = 10;
         let lastProcessedCount = 0;
+        let lastActiveRow = null;
 
         while (window.processedOrderIds.size < totalOrderCount && stuckCount < maxStuckAttempts) {
             // 1. Get currently visible rows
@@ -1393,18 +1394,23 @@ GM_addStyle(`
                 if (SHOW_PROCESSING_OVERLAY) {
                     // Overlay mode: update overlay status
                     updateProcessingStatus(statusText, currentCount + 1, totalOrderCount);
+                } else {
                     // Button mode: update button with water-fill progress
                     updateButtonProgress(currentCount + 1, totalOrderCount, statusText);
                 }
 
                 // --- ROW HIGHLIGHT LOGIC ---
-                // Remove highlight from previous row if it exists
-                const prevActive = document.querySelector('tr.processing-active-row');
-                if (prevActive) prevActive.classList.remove('processing-active-row');
+                // Remove highlight from previous row (using variable is faster than DOM query)
+                if (lastActiveRow && lastActiveRow !== row) {
+                    lastActiveRow.classList.remove('processing-active-row');
+                }
 
                 // Add highlight to current row
                 row.classList.add('processing-active-row');
+                lastActiveRow = row; // Track for next iteration
+
                 // Scroll into view comfortably if needed (center align)
+                // ONE scroll is enough - removed redundant scroll below
                 row.scrollIntoView({ block: 'center', behavior: 'smooth' });
 
                 log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
@@ -1421,9 +1427,7 @@ GM_addStyle(`
                     }
                 }
 
-                // Scroll the row into view and wait a moment
-                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                await new Promise(resolve => setTimeout(resolve, 300));
+                // Removed redundant second scrollIntoView and 300ms wait here to speed up processing
 
                 // Open drawer
                 log(` Order ${orderId}: Attempting to open drawer...`);
