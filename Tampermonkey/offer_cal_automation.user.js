@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.9
+// @version      8.0
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -165,20 +165,26 @@ GM_addStyle(`
         gap: 10px;
     }
     
-    /* Spinning loader icon - uses transform which is GPU-accelerated */
-    #processing-overlay .spinner {
-        width: 16px;
-        height: 16px;
-        border: 2px solid rgba(255,255,255,0.3);
-        border-top-color: white;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        transform: translateZ(0);
-        -webkit-transform: translateZ(0);
+    /* SVG Progress Ring - shows actual percentage */
+    #processing-overlay .progress-ring {
+        width: 24px;
+        height: 24px;
+        transform: rotate(-90deg) translateZ(0);
+        -webkit-transform: rotate(-90deg) translateZ(0);
     }
     
-    @keyframes spin {
-        to { transform: rotate(360deg) translateZ(0); }
+    #processing-overlay .progress-ring-bg {
+        fill: none;
+        stroke: rgba(255, 255, 255, 0.3);
+        stroke-width: 3;
+    }
+    
+    #processing-overlay .progress-ring-fill {
+        fill: none;
+        stroke: white;
+        stroke-width: 3;
+        stroke-linecap: round;
+        transition: stroke-dashoffset 0.3s ease;
     }
 `);
 
@@ -188,6 +194,7 @@ GM_addStyle(`
     // *** CONFIGURATION ***
     const DEBUG = false; // Set to true to enable verbose console logging
     const SHOW_DEBUG_COLUMNS = false; // Set to true to show debug columns (Offer, Issue, Items, Tofu#, Pork#, Beef#)
+    const SHOW_PROCESSING_OVERLAY = true; // Set to false to disable green glow overlay during processing
 
     // Helper function for debug logging - only outputs when DEBUG is true
     function log(...args) {
@@ -235,7 +242,11 @@ GM_addStyle(`
             <div class="glow-pulse"></div>
             <div class="click-blocker"></div>
             <div class="status-message">
-                <div class="spinner"></div>
+                <svg class="progress-ring" viewBox="0 0 24 24">
+                    <circle class="progress-ring-bg" cx="12" cy="12" r="10"></circle>
+                    <circle class="progress-ring-fill" cx="12" cy="12" r="10" 
+                            stroke-dasharray="62.83" stroke-dashoffset="62.83"></circle>
+                </svg>
                 <span class="status-text">Initializing...</span>
             </div>
         `;
@@ -244,17 +255,31 @@ GM_addStyle(`
     }
 
     function showProcessingOverlay(statusText = 'Processing...') {
+        if (!SHOW_PROCESSING_OVERLAY) return;
         processingOverlay = createProcessingOverlay();
-        updateProcessingStatus(statusText);
+        updateProcessingStatus(statusText, 0, 1);
         processingOverlay.classList.add('active');
+
+        // Hide the button for cleaner UI (overlay shows status instead)
+        const button = document.getElementById('fetch-offer-data-btn');
+        if (button) button.classList.add('hidden');
     }
 
-    function updateProcessingStatus(statusText) {
-        if (processingOverlay) {
-            const textEl = processingOverlay.querySelector('.status-text');
-            if (textEl) {
-                textEl.textContent = statusText;
-            }
+    function updateProcessingStatus(statusText, current = 0, total = 1) {
+        if (!SHOW_PROCESSING_OVERLAY || !processingOverlay) return;
+
+        const textEl = processingOverlay.querySelector('.status-text');
+        if (textEl) {
+            textEl.textContent = statusText;
+        }
+
+        // Update progress ring
+        const progressRing = processingOverlay.querySelector('.progress-ring-fill');
+        if (progressRing && total > 0) {
+            const circumference = 62.83; // 2 * PI * 10 (radius)
+            const progress = current / total;
+            const offset = circumference * (1 - progress);
+            progressRing.style.strokeDashoffset = offset;
         }
     }
 
@@ -262,6 +287,10 @@ GM_addStyle(`
         if (processingOverlay) {
             processingOverlay.classList.remove('active');
         }
+
+        // Show the button again
+        const button = document.getElementById('fetch-offer-data-btn');
+        if (button) button.classList.remove('hidden');
     }
 
     // *** SESSION STORAGE RECOVERY FUNCTIONS ***
@@ -1246,11 +1275,11 @@ GM_addStyle(`
                 const orderId = (orderIdEl.textContent || '').trim();
                 if (!orderId || window.processedOrderIds.has(orderId)) continue;
 
-                // Update button text and overlay status
+                // Update overlay status with progress
                 const currentCount = window.processedOrderIds.size;
                 const statusText = `Processing order ${currentCount + 1} of ${totalOrderCount}`;
                 button.textContent = `Processing... (${currentCount + 1}/${totalOrderCount})`;
-                updateProcessingStatus(statusText);
+                updateProcessingStatus(statusText, currentCount + 1, totalOrderCount);
 
                 log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
 
