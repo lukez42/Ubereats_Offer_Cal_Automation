@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.4
+// @version      8.5
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -97,6 +97,16 @@ GM_addStyle(`
         padding: 16px 16px 16px 0;
         vertical-align: top;
         color: #A6A6A6;
+    }
+    
+    /* Active Row Highlight - Performance optimized */
+    tr.processing-active-row {
+        position: relative;
+        background-color: rgba(6, 193, 103, 0.08) !important; /* Subtle highlight */
+        box-shadow: inset 4px 0 0 #06C167 !important; /* Left green accent */
+        transition: background-color 0.2s ease, box-shadow 0.2s ease;
+        will-change: background-color, box-shadow;
+        z-index: 10;
     }
 
     /* === Processing Mode Overlay (GPU-Optimized) === */
@@ -381,6 +391,10 @@ GM_addStyle(`
         if (processingOverlay) {
             processingOverlay.classList.remove('active');
         }
+
+        // Cleanup row highlight
+        const activeRow = document.querySelector('tr.processing-active-row');
+        if (activeRow) activeRow.classList.remove('processing-active-row');
 
         // Show the button again and reset its state
         const button = document.getElementById('fetch-offer-data-btn');
@@ -1379,10 +1393,19 @@ GM_addStyle(`
                 if (SHOW_PROCESSING_OVERLAY) {
                     // Overlay mode: update overlay status
                     updateProcessingStatus(statusText, currentCount + 1, totalOrderCount);
-                } else {
                     // Button mode: update button with water-fill progress
                     updateButtonProgress(currentCount + 1, totalOrderCount, statusText);
                 }
+
+                // --- ROW HIGHLIGHT LOGIC ---
+                // Remove highlight from previous row if it exists
+                const prevActive = document.querySelector('tr.processing-active-row');
+                if (prevActive) prevActive.classList.remove('processing-active-row');
+
+                // Add highlight to current row
+                row.classList.add('processing-active-row');
+                // Scroll into view comfortably if needed (center align)
+                row.scrollIntoView({ block: 'center', behavior: 'smooth' });
 
                 log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
 
