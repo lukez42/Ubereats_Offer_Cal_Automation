@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.1
+// @version      7.2
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -67,12 +67,26 @@ GM_addStyle(`
 (function () {
     'use strict';
 
-    // *** STARTUP LOG - This should appear in console immediately ***
-    console.log('='.repeat(60));
-    console.log('[UberEats Script] Script loaded!');
-    console.log('[UberEats Script] Current URL:', window.location.href);
-    console.log('[UberEats Script] On orders page:', window.location.href.includes('/manager/orders'));
-    console.log('='.repeat(60));
+    // *** CONFIGURATION ***
+    const DEBUG = false; // Set to true to enable verbose console logging
+    const SHOW_DEBUG_COLUMNS = false; // Set to true to show debug columns (Offer, Issue, Items, Tofu#, Pork#, Beef#)
+
+    // Helper function for debug logging
+    function log(...args) {
+        if (DEBUG) console.log('[UberEats Script]', ...args);
+    }
+    function logDebug(...args) {
+        if (DEBUG) console.log('[DEBUG]', ...args);
+    }
+    function warn(...args) {
+        console.warn('[UberEats Script]', ...args);
+    }
+    function error(...args) {
+        console.error('[UberEats Script]', ...args);
+    }
+
+    // Startup log (always shown)
+    console.log('[UberEats Script] v7.2 loaded | DEBUG:', DEBUG, '| DEBUG_COLUMNS:', SHOW_DEBUG_COLUMNS);
 
     // --- 1. A global store to hold the data we intercept ---
     window.orderOfferData = {};
@@ -838,60 +852,63 @@ GM_addStyle(`
         const subtotalHeader = headerRow.lastElementChild;
         if (!subtotalHeader) return false; // Table row is empty
 
-        // Add "Offer" Header
-        if (!headerRow.querySelector('.th-offer')) {
-            const newHeader = document.createElement('th');
-            newHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-offer";
-            newHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Offer</div></div>`;
-            headerRow.insertBefore(newHeader, subtotalHeader);
-        }
+        // DEBUG COLUMNS - Only added if SHOW_DEBUG_COLUMNS is true
+        if (SHOW_DEBUG_COLUMNS) {
+            // Add "Offer" Header
+            if (!headerRow.querySelector('.th-offer')) {
+                const newHeader = document.createElement('th');
+                newHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-offer";
+                newHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Offer</div></div>`;
+                headerRow.insertBefore(newHeader, subtotalHeader);
+            }
 
-        // Add "Issue (Scraped)" Header
-        if (!headerRow.querySelector('.th-issue')) {
-            const newIssueHeader = document.createElement('th');
-            newIssueHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-issue";
-            newIssueHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Issue (Scraped)</div></div>`;
-            headerRow.insertBefore(newIssueHeader, subtotalHeader);
-        }
+            // Add "Issue (Scraped)" Header
+            if (!headerRow.querySelector('.th-issue')) {
+                const newIssueHeader = document.createElement('th');
+                newIssueHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-issue";
+                newIssueHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Issue (Scraped)</div></div>`;
+                headerRow.insertBefore(newIssueHeader, subtotalHeader);
+            }
 
-        // Add "Items Detected" Header for debugging
-        if (!headerRow.querySelector('.th-items-detected')) {
-            const itemsDetectedHeader = document.createElement('th');
-            itemsDetectedHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-items-detected";
-            itemsDetectedHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Items Detected</div></div>`;
-            headerRow.insertBefore(itemsDetectedHeader, subtotalHeader);
-        }
+            // Add "Items Detected" Header
+            if (!headerRow.querySelector('.th-items-detected')) {
+                const itemsDetectedHeader = document.createElement('th');
+                itemsDetectedHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-items-detected";
+                itemsDetectedHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Items Detected</div></div>`;
+                headerRow.insertBefore(itemsDetectedHeader, subtotalHeader);
+            }
 
-        // Add "Offer Value" Header to show exact offer amount for verification
-        if (!headerRow.querySelector('.th-offer-value')) {
-            const offerValueHeader = document.createElement('th');
-            offerValueHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-offer-value";
-            offerValueHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Offer Value</div></div>`;
-            headerRow.insertBefore(offerValueHeader, subtotalHeader);
-        }
+            // Add "Offer Value" Header
+            if (!headerRow.querySelector('.th-offer-value')) {
+                const offerValueHeader = document.createElement('th');
+                offerValueHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-offer-value";
+                offerValueHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Offer Value</div></div>`;
+                headerRow.insertBefore(offerValueHeader, subtotalHeader);
+            }
 
-        // Add "Tofu #" Header for running count
-        if (!headerRow.querySelector('.th-tofu-count')) {
-            const tofuCountHeader = document.createElement('th');
-            tofuCountHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-tofu-count";
-            tofuCountHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm" style="color: #2E7D32;">Tofu #</div></div>`;
-            headerRow.insertBefore(tofuCountHeader, subtotalHeader);
-        }
+            // Add "Tofu #" Header
+            if (!headerRow.querySelector('.th-tofu-count')) {
+                const tofuCountHeader = document.createElement('th');
+                tofuCountHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-tofu-count";
+                tofuCountHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm" style="color: #2E7D32;">Tofu #</div></div>`;
+                headerRow.insertBefore(tofuCountHeader, subtotalHeader);
+            }
 
-        // Add "Pork #" Header for running count
-        if (!headerRow.querySelector('.th-pork-count')) {
-            const porkCountHeader = document.createElement('th');
-            porkCountHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-pork-count";
-            porkCountHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm" style="color: #E65100;">Pork #</div></div>`;
-            headerRow.insertBefore(porkCountHeader, subtotalHeader);
-        }
+            // Add "Pork #" Header
+            if (!headerRow.querySelector('.th-pork-count')) {
+                const porkCountHeader = document.createElement('th');
+                porkCountHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-pork-count";
+                porkCountHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm" style="color: #E65100;">Pork #</div></div>`;
+                headerRow.insertBefore(porkCountHeader, subtotalHeader);
+            }
 
-        // Add "Beef #" Header for running count
-        if (!headerRow.querySelector('.th-beef-count')) {
-            const beefCountHeader = document.createElement('th');
-            beefCountHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-beef-count";
-            beefCountHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm" style="color: #B71C1C;">Beef #</div></div>`;
-            headerRow.insertBefore(beefCountHeader, subtotalHeader);
+            // Add "Beef #" Header
+            if (!headerRow.querySelector('.th-beef-count')) {
+                const beefCountHeader = document.createElement('th');
+                beefCountHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-beef-count";
+                beefCountHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm" style="color: #B71C1C;">Beef #</div></div>`;
+                headerRow.insertBefore(beefCountHeader, subtotalHeader);
+            }
         }
         return true; // Columns are set up
     }
@@ -910,7 +927,9 @@ GM_addStyle(`
 
     // Helper to add placeholder cells to newly loaded rows
     function updateNewRows() {
-        if (!document.querySelector('.th-offer')) return; // Columns not ready
+        // Only add cells if debug columns are enabled and headers exist
+        if (!SHOW_DEBUG_COLUMNS) return;
+        if (!document.querySelector('.th-offer')) return;
 
         const orderRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
         orderRows.forEach(row => {
@@ -1155,108 +1174,110 @@ GM_addStyle(`
                     ordersWithOffers++;
                 }
 
-                // Update UI cells
-                const offerCell = row.querySelector('.td-offer');
-                if (offerCell) {
-                    offerCell.textContent = offer.text;
-                    offerCell.className = offer.value !== 0 ? 'td-offer-value td-offer' : 'td-no-offer td-offer';
-                }
-
-                const issueCell = row.querySelector('.td-issue');
-                if (issueCell) {
-                    issueCell.textContent = issue;
-                    issueCell.className = issue !== "—" ? 'td-offer-value td-issue' : 'td-no-offer td-issue';
-                }
-
-                const itemsDetectedCell = row.querySelector('.td-items-detected');
-                if (itemsDetectedCell) {
-                    const items = window.orderItemsData[orderId] || [];
-                    const bogoMealPattern = /^\(\d+\)/;
-                    const bogoItems = items.filter(item => bogoMealPattern.test(item.name));
-
-                    if (bogoItems.length > 0 && offer.value !== 0) {
-                        const shortNames = bogoItems.map(item => {
-                            let shortName = 'Other';
-                            if (item.name.includes('Beef')) shortName = 'Beef';
-                            else if (item.name.includes('Tofu')) shortName = 'Tofu';
-                            else if (item.name.includes('Pork')) shortName = 'Pork';
-                            return `${shortName}×${item.quantity}`;
-                        }).join(', ');
-                        itemsDetectedCell.textContent = shortNames;
-                        itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-offer-value td-items-detected';
-                        window.orderItemsDetected[orderId] = shortNames;
-                    } else {
-                        itemsDetectedCell.textContent = '—';
-                        itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-items-detected';
+                // Update UI cells (debug columns only)
+                if (SHOW_DEBUG_COLUMNS) {
+                    const offerCell = row.querySelector('.td-offer');
+                    if (offerCell) {
+                        offerCell.textContent = offer.text;
+                        offerCell.className = offer.value !== 0 ? 'td-offer-value td-offer' : 'td-no-offer td-offer';
                     }
-                }
 
-                const offerValueCell = row.querySelector('.td-offer-value');
-                if (offerValueCell) {
-                    if (offer.value !== 0) {
-                        offerValueCell.textContent = `£${Math.abs(offer.value).toFixed(2)}`;
-                        offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-offer-value';
-                        offerValueCell.style.color = '#DE1135';
-                        offerValueCell.style.fontWeight = '500';
-                    } else {
-                        offerValueCell.textContent = '—';
-                        offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-offer-value';
+                    const issueCell = row.querySelector('.td-issue');
+                    if (issueCell) {
+                        issueCell.textContent = issue;
+                        issueCell.className = issue !== "—" ? 'td-offer-value td-issue' : 'td-no-offer td-issue';
                     }
-                }
 
-                // Calculate item counts for this order and update running totals
-                const allItems = window.orderItemsData[orderId] || [];
-                const bogoPattern = /^\(\d+\)/;
-                const bogoItemsForCount = allItems.filter(item => bogoPattern.test(item.name));
+                    const itemsDetectedCell = row.querySelector('.td-items-detected');
+                    if (itemsDetectedCell) {
+                        const items = window.orderItemsData[orderId] || [];
+                        const bogoMealPattern = /^\(\d+\)/;
+                        const bogoItems = items.filter(item => bogoMealPattern.test(item.name));
 
-                let orderTofuCount = 0;
-                let orderPorkCount = 0;
-                let orderBeefCount = 0;
-
-                // Only count if there's an offer (BOGO items)
-                if (offer.value !== 0 && bogoItemsForCount.length > 0) {
-                    bogoItemsForCount.forEach(item => {
-                        if (item.name.includes('Tofu')) {
-                            orderTofuCount += item.quantity;
-                        } else if (item.name.includes('Pork')) {
-                            orderPorkCount += item.quantity;
-                        } else if (item.name.includes('Beef')) {
-                            orderBeefCount += item.quantity;
+                        if (bogoItems.length > 0 && offer.value !== 0) {
+                            const shortNames = bogoItems.map(item => {
+                                let shortName = 'Other';
+                                if (item.name.includes('Beef')) shortName = 'Beef';
+                                else if (item.name.includes('Tofu')) shortName = 'Tofu';
+                                else if (item.name.includes('Pork')) shortName = 'Pork';
+                                return `${shortName}×${item.quantity}`;
+                            }).join(', ');
+                            itemsDetectedCell.textContent = shortNames;
+                            itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-offer-value td-items-detected';
+                            window.orderItemsDetected[orderId] = shortNames;
+                        } else {
+                            itemsDetectedCell.textContent = '—';
+                            itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-items-detected';
                         }
-                    });
-
-                    runningTofuCount += orderTofuCount;
-                    runningPorkCount += orderPorkCount;
-                    runningBeefCount += orderBeefCount;
-
-                    console.log(`[UberEats Script] Order ${orderId}: +Tofu=${orderTofuCount} +Pork=${orderPorkCount} +Beef=${orderBeefCount} | Running: Tofu=${runningTofuCount} Pork=${runningPorkCount} Beef=${runningBeefCount}`);
-                }
-
-                // Update the running count cells in this row
-                const tofuCountCell = row.querySelector('.td-tofu-count');
-                if (tofuCountCell) {
-                    if (orderTofuCount > 0) {
-                        tofuCountCell.textContent = `+${orderTofuCount} (${runningTofuCount})`;
-                    } else {
-                        tofuCountCell.textContent = runningTofuCount > 0 ? `(${runningTofuCount})` : '—';
                     }
-                }
 
-                const porkCountCell = row.querySelector('.td-pork-count');
-                if (porkCountCell) {
-                    if (orderPorkCount > 0) {
-                        porkCountCell.textContent = `+${orderPorkCount} (${runningPorkCount})`;
-                    } else {
-                        porkCountCell.textContent = runningPorkCount > 0 ? `(${runningPorkCount})` : '—';
+                    const offerValueCell = row.querySelector('.td-offer-value');
+                    if (offerValueCell) {
+                        if (offer.value !== 0) {
+                            offerValueCell.textContent = `£${Math.abs(offer.value).toFixed(2)}`;
+                            offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-offer-value';
+                            offerValueCell.style.color = '#DE1135';
+                            offerValueCell.style.fontWeight = '500';
+                        } else {
+                            offerValueCell.textContent = '—';
+                            offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-offer-value';
+                        }
                     }
-                }
 
-                const beefCountCell = row.querySelector('.td-beef-count');
-                if (beefCountCell) {
-                    if (orderBeefCount > 0) {
-                        beefCountCell.textContent = `+${orderBeefCount} (${runningBeefCount})`;
-                    } else {
-                        beefCountCell.textContent = runningBeefCount > 0 ? `(${runningBeefCount})` : '—';
+                    // Calculate item counts for this order and update running totals
+                    const allItems = window.orderItemsData[orderId] || [];
+                    const bogoPattern = /^\(\d+\)/;
+                    const bogoItemsForCount = allItems.filter(item => bogoPattern.test(item.name));
+
+                    let orderTofuCount = 0;
+                    let orderPorkCount = 0;
+                    let orderBeefCount = 0;
+
+                    // Only count if there's an offer (BOGO items)
+                    if (offer.value !== 0 && bogoItemsForCount.length > 0) {
+                        bogoItemsForCount.forEach(item => {
+                            if (item.name.includes('Tofu')) {
+                                orderTofuCount += item.quantity;
+                            } else if (item.name.includes('Pork')) {
+                                orderPorkCount += item.quantity;
+                            } else if (item.name.includes('Beef')) {
+                                orderBeefCount += item.quantity;
+                            }
+                        });
+
+                        runningTofuCount += orderTofuCount;
+                        runningPorkCount += orderPorkCount;
+                        runningBeefCount += orderBeefCount;
+
+                        if (DEBUG) console.log(`[UberEats Script] Order ${orderId}: +Tofu=${orderTofuCount} +Pork=${orderPorkCount} +Beef=${orderBeefCount} | Running: Tofu=${runningTofuCount} Pork=${runningPorkCount} Beef=${runningBeefCount}`);
+                    }
+
+                    // Update the running count cells in this row
+                    const tofuCountCell = row.querySelector('.td-tofu-count');
+                    if (tofuCountCell) {
+                        if (orderTofuCount > 0) {
+                            tofuCountCell.textContent = `+${orderTofuCount} (${runningTofuCount})`;
+                        } else {
+                            tofuCountCell.textContent = runningTofuCount > 0 ? `(${runningTofuCount})` : '—';
+                        }
+                    }
+
+                    const porkCountCell = row.querySelector('.td-pork-count');
+                    if (porkCountCell) {
+                        if (orderPorkCount > 0) {
+                            porkCountCell.textContent = `+${orderPorkCount} (${runningPorkCount})`;
+                        } else {
+                            porkCountCell.textContent = runningPorkCount > 0 ? `(${runningPorkCount})` : '—';
+                        }
+                    }
+
+                    const beefCountCell = row.querySelector('.td-beef-count');
+                    if (beefCountCell) {
+                        if (orderBeefCount > 0) {
+                            beefCountCell.textContent = `+${orderBeefCount} (${runningBeefCount})`;
+                        } else {
+                            beefCountCell.textContent = runningBeefCount > 0 ? `(${runningBeefCount})` : '—';
+                        }
                     }
                 }
 
