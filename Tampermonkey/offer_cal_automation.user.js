@@ -878,13 +878,6 @@ GM_addStyle(`
                 headerRow.insertBefore(itemsDetectedHeader, subtotalHeader);
             }
 
-            // Add "Offer Value" Header
-            if (!headerRow.querySelector('.th-offer-value')) {
-                const offerValueHeader = document.createElement('th');
-                offerValueHeader.className = "_c1 _ez _c2 _f0 _nf _al _e5 _ea _e6 _e9 _b9 _c0 _f9 _fj _jz _ng _kc _nh th-offer-value";
-                offerValueHeader.innerHTML = `<div class="_af _ag _h4"><div data-baseweb="typo-labelsmall" class="_c0 _c1 _c2 _di _cm">Offer Value</div></div>`;
-                headerRow.insertBefore(offerValueHeader, subtotalHeader);
-            }
 
             // Add "Tofu #" Header
             if (!headerRow.querySelector('.th-tofu-count')) {
@@ -950,11 +943,6 @@ GM_addStyle(`
                 const itemsDetectedCell = document.createElement('td');
                 itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-items-detected';
                 row.insertBefore(itemsDetectedCell, subtotalCell);
-            }
-            if (!row.querySelector('.td-offer-value')) {
-                const offerValueCell = document.createElement('td');
-                offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-offer-value';
-                row.insertBefore(offerValueCell, subtotalCell);
             }
             if (!row.querySelector('.td-tofu-count')) {
                 const tofuCell = document.createElement('td');
@@ -1208,19 +1196,6 @@ GM_addStyle(`
                         } else {
                             itemsDetectedCell.textContent = '—';
                             itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-items-detected';
-                        }
-                    }
-
-                    const offerValueCell = row.querySelector('.td-offer-value');
-                    if (offerValueCell) {
-                        if (offer.value !== 0) {
-                            offerValueCell.textContent = `£${Math.abs(offer.value).toFixed(2)}`;
-                            offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-offer-value';
-                            offerValueCell.style.color = '#DE1135';
-                            offerValueCell.style.fontWeight = '500';
-                        } else {
-                            offerValueCell.textContent = '—';
-                            offerValueCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-no-offer td-offer-value';
                         }
                     }
 
