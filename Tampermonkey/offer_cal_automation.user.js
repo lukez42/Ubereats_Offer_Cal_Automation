@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.0
+// @version      8.1
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -31,6 +31,8 @@ GM_addStyle(`
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         transition: transform 0.3s ease, background-color 0.2s, opacity 0.3s ease;
         opacity: 1;
+        overflow: hidden; /* For fill animation */
+        position: relative;
     }
     #fetch-offer-data-btn.hidden {
         transform: translateY(100px);
@@ -47,9 +49,35 @@ GM_addStyle(`
     #fetch-offer-data-btn:active {
         transform: scale(0.95);
     }
+    
+    /* Loading state with fill animation (non-overlay mode) */
     #fetch-offer-data-btn.loading {
-        background-color: #5E5E5E;
+        background-color: #3a3a3a;
         cursor: not-allowed;
+    }
+    #fetch-offer-data-btn.loading.with-progress {
+        background-color: #2a2a2a; /* Darker base for contrast */
+    }
+    
+    /* Water-fill progress animation using pseudo-element */
+    #fetch-offer-data-btn .progress-fill {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(90deg, #06C167 0%, #08d975 50%, #06C167 100%);
+        transform: scaleX(0);
+        transform-origin: left center;
+        transition: transform 0.3s ease-out;
+        z-index: -1;
+        border-radius: 50px;
+    }
+    
+    /* Button text stays above the fill */
+    #fetch-offer-data-btn .btn-text {
+        position: relative;
+        z-index: 1;
     }
     .th-offer, .th-issue, .th-items-detected {
         display: table-cell !important;
@@ -283,14 +311,57 @@ GM_addStyle(`
         }
     }
 
+    // Update button progress (for non-overlay mode)
+    function updateButtonProgress(current, total, statusText) {
+        const button = document.getElementById('fetch-offer-data-btn');
+        if (!button) return;
+
+        const btnText = button.querySelector('.btn-text');
+        const progressFill = button.querySelector('.progress-fill');
+
+        if (btnText) {
+            btnText.textContent = `Processing... (${current}/${total})`;
+        }
+
+        if (progressFill && total > 0) {
+            const progress = current / total;
+            progressFill.style.transform = `scaleX(${progress})`;
+        }
+
+        // Add class for styling
+        button.classList.add('with-progress');
+    }
+
+    // Reset button to original state
+    function resetButtonProgress() {
+        const button = document.getElementById('fetch-offer-data-btn');
+        if (!button) return;
+
+        const btnText = button.querySelector('.btn-text');
+        const progressFill = button.querySelector('.progress-fill');
+
+        if (btnText) {
+            btnText.textContent = 'Fetch Offer Data';
+        }
+
+        if (progressFill) {
+            progressFill.style.transform = 'scaleX(0)';
+        }
+
+        button.classList.remove('with-progress');
+    }
+
     function hideProcessingOverlay() {
         if (processingOverlay) {
             processingOverlay.classList.remove('active');
         }
 
-        // Show the button again
+        // Show the button again and reset its state
         const button = document.getElementById('fetch-offer-data-btn');
-        if (button) button.classList.remove('hidden');
+        if (button) {
+            button.classList.remove('hidden');
+            resetButtonProgress();
+        }
     }
 
     // *** SESSION STORAGE RECOVERY FUNCTIONS ***
@@ -1275,11 +1346,17 @@ GM_addStyle(`
                 const orderId = (orderIdEl.textContent || '').trim();
                 if (!orderId || window.processedOrderIds.has(orderId)) continue;
 
-                // Update overlay status with progress
+                // Update progress display based on mode
                 const currentCount = window.processedOrderIds.size;
                 const statusText = `Processing order ${currentCount + 1} of ${totalOrderCount}`;
-                button.textContent = `Processing... (${currentCount + 1}/${totalOrderCount})`;
-                updateProcessingStatus(statusText, currentCount + 1, totalOrderCount);
+
+                if (SHOW_PROCESSING_OVERLAY) {
+                    // Overlay mode: update overlay status
+                    updateProcessingStatus(statusText, currentCount + 1, totalOrderCount);
+                } else {
+                    // Button mode: update button with water-fill progress
+                    updateButtonProgress(currentCount + 1, totalOrderCount, statusText);
+                }
 
                 log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
 
@@ -1942,7 +2019,13 @@ GM_addStyle(`
         if (heading && !document.getElementById('fetch-offer-data-btn')) {
             const button = document.createElement('button');
             button.id = 'fetch-offer-data-btn';
-            button.textContent = 'Fetch Offer Data';
+
+            // Add progress fill element and text wrapper for water-fill animation
+            button.innerHTML = `
+                <div class="progress-fill"></div>
+                <span class="btn-text">Fetch Offer Data</span>
+            `;
+
             heading.parentElement.appendChild(button);
             button.addEventListener('click', processOrders);
 
