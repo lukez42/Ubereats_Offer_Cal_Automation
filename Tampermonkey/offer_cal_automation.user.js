@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      8.2
+// @version      8.3
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -1583,7 +1583,14 @@ GM_addStyle(`
 
             // 4. If not done and no visible unprocessed rows, scroll to load more
             if (window.processedOrderIds.size < totalOrderCount) {
-                button.textContent = `Loading more... (${window.processedOrderIds.size}/${totalOrderCount})`;
+                // Update button text (preserving btn-text structure for progress-fill animation)
+                const btnText = button.querySelector('.btn-text');
+                const loadingText = `Loading more... (${window.processedOrderIds.size}/${totalOrderCount})`;
+                if (btnText) {
+                    btnText.textContent = loadingText;
+                } else {
+                    button.textContent = loadingText;
+                }
 
                 // Scroll down to trigger loading
                 scrollableElement.scrollTop = scrollableElement.scrollHeight;
@@ -1616,7 +1623,6 @@ GM_addStyle(`
         }
 
         // --- 5. Final report ---
-        button.textContent = 'Fetch Offer Data';
         button.classList.remove('loading');
 
         // Hide the processing overlay
