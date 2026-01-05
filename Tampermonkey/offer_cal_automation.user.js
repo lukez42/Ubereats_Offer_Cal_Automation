@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.7
+// @version      7.8
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -71,6 +71,98 @@ GM_addStyle(`
         vertical-align: top;
         color: #A6A6A6;
     }
+
+    /* === Processing Mode Overlay === */
+    #processing-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        z-index: 99999;
+        pointer-events: all;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.4s ease, visibility 0.4s ease;
+    }
+    #processing-overlay.active {
+        opacity: 1;
+        visibility: visible;
+    }
+    
+    /* Green glow border using box-shadow (vignette effect) */
+    #processing-overlay .glow-border {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        box-shadow: 
+            inset 0 0 60px rgba(6, 193, 103, 0.4),
+            inset 0 0 120px rgba(6, 193, 103, 0.2),
+            inset 0 0 180px rgba(6, 193, 103, 0.1);
+        animation: glowPulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes glowPulse {
+        0%, 100% { 
+            box-shadow: 
+                inset 0 0 60px rgba(6, 193, 103, 0.4),
+                inset 0 0 120px rgba(6, 193, 103, 0.2),
+                inset 0 0 180px rgba(6, 193, 103, 0.1);
+        }
+        50% { 
+            box-shadow: 
+                inset 0 0 80px rgba(6, 193, 103, 0.5),
+                inset 0 0 150px rgba(6, 193, 103, 0.25),
+                inset 0 0 220px rgba(6, 193, 103, 0.15);
+        }
+    }
+    
+    /* Click-blocking transparent center */
+    #processing-overlay .click-blocker {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        cursor: not-allowed;
+    }
+    
+    /* Status message at bottom */
+    #processing-overlay .status-message {
+        position: absolute;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(6, 193, 103, 0.95);
+        color: white;
+        padding: 12px 24px;
+        border-radius: 50px;
+        font-family: UberMoveText, system-ui, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 14px;
+        font-weight: 500;
+        box-shadow: 0 4px 20px rgba(6, 193, 103, 0.4);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    /* Spinning loader icon */
+    #processing-overlay .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
 `);
 
 (function () {
@@ -109,6 +201,49 @@ GM_addStyle(`
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isMobileDevice) {
         log(' Mobile device detected - touch events will be used');
+    }
+
+    // === PROCESSING OVERLAY FUNCTIONS ===
+    let processingOverlay = null;
+
+    function createProcessingOverlay() {
+        if (document.getElementById('processing-overlay')) {
+            return document.getElementById('processing-overlay');
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'processing-overlay';
+        overlay.innerHTML = `
+            <div class="glow-border"></div>
+            <div class="click-blocker"></div>
+            <div class="status-message">
+                <div class="spinner"></div>
+                <span class="status-text">Initializing...</span>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        return overlay;
+    }
+
+    function showProcessingOverlay(statusText = 'Processing...') {
+        processingOverlay = createProcessingOverlay();
+        updateProcessingStatus(statusText);
+        processingOverlay.classList.add('active');
+    }
+
+    function updateProcessingStatus(statusText) {
+        if (processingOverlay) {
+            const textEl = processingOverlay.querySelector('.status-text');
+            if (textEl) {
+                textEl.textContent = statusText;
+            }
+        }
+    }
+
+    function hideProcessingOverlay() {
+        if (processingOverlay) {
+            processingOverlay.classList.remove('active');
+        }
     }
 
     // *** SESSION STORAGE RECOVERY FUNCTIONS ***
@@ -1001,6 +1136,9 @@ GM_addStyle(`
         if (button.classList.contains('loading')) return;
         button.classList.add('loading');
 
+        // Show processing overlay with green glow
+        showProcessingOverlay('Initializing...');
+
         // Request Wake Lock to prevent screen from sleeping during scraping
         let wakeLock = null;
         try {
@@ -1043,6 +1181,7 @@ GM_addStyle(`
         if (totalOrderCount === null) {
             Swal.fire('Error', 'Could not find total order count (e.g., "Showing 76 results"). Make sure it is visible on the page.', 'error');
             button.classList.remove('loading');
+            hideProcessingOverlay();
             if (wakeLock) await wakeLock.release();
             return;
         }
@@ -1051,6 +1190,7 @@ GM_addStyle(`
         if (!setupTableColumns()) {
             Swal.fire('Error', 'Could not find the orders table.', 'error');
             button.classList.remove('loading');
+            hideProcessingOverlay();
             if (wakeLock) await wakeLock.release();
             return;
         }
@@ -1060,6 +1200,7 @@ GM_addStyle(`
         if (!scrollableElement) {
             Swal.fire('Error', 'Could not find the scrollable order list.', 'error');
             button.classList.remove('loading');
+            hideProcessingOverlay();
             if (wakeLock) await wakeLock.release();
             return;
         }
@@ -1087,9 +1228,11 @@ GM_addStyle(`
                 const orderId = (orderIdEl.textContent || '').trim();
                 if (!orderId || window.processedOrderIds.has(orderId)) continue;
 
-                // Update button text
+                // Update button text and overlay status
                 const currentCount = window.processedOrderIds.size;
+                const statusText = `Processing order ${currentCount + 1} of ${totalOrderCount}`;
                 button.textContent = `Processing... (${currentCount + 1}/${totalOrderCount})`;
+                updateProcessingStatus(statusText);
 
                 log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
 
@@ -1352,6 +1495,9 @@ GM_addStyle(`
         // --- 5. Final report ---
         button.textContent = 'Fetch Offer Data';
         button.classList.remove('loading');
+
+        // Hide the processing overlay
+        hideProcessingOverlay();
 
         // Release Wake Lock now that processing is complete
         if (wakeLock) {
