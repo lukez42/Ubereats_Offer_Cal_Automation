@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.2
+// @version      7.3
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -71,7 +71,7 @@ GM_addStyle(`
     const DEBUG = false; // Set to true to enable verbose console logging
     const SHOW_DEBUG_COLUMNS = false; // Set to true to show debug columns (Offer, Issue, Items, Tofu#, Pork#, Beef#)
 
-    // Helper function for debug logging
+    // Helper function for debug logging - only outputs when DEBUG is true
     function log(...args) {
         if (DEBUG) console.log('[UberEats Script]', ...args);
     }
@@ -85,8 +85,8 @@ GM_addStyle(`
         console.error('[UberEats Script]', ...args);
     }
 
-    // Startup log (always shown)
-    console.log('[UberEats Script] v7.2 loaded | DEBUG:', DEBUG, '| DEBUG_COLUMNS:', SHOW_DEBUG_COLUMNS);
+    // Startup log (always shown - minimal output for production)
+    console.log('[UberEats Script] v7.3 loaded');
 
     // --- 1. A global store to hold the data we intercept ---
     window.orderOfferData = {};
@@ -98,7 +98,7 @@ GM_addStyle(`
     // Detect if running on mobile device (for Kiwi Browser on Android)
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     if (isMobileDevice) {
-        console.log('[UberEats Script] Mobile device detected - touch events will be used');
+        log(' Mobile device detected - touch events will be used');
     }
 
     // *** SESSION STORAGE RECOVERY FUNCTIONS ***
@@ -114,7 +114,7 @@ GM_addStyle(`
                 timestamp: Date.now()
             };
             sessionStorage.setItem('ubereats_recovery_state', JSON.stringify(state));
-            console.log(`[UberEats Script] Saved recovery state: ${state.processedOrderIds.length} orders processed`);
+            log(` Saved recovery state: ${state.processedOrderIds.length} orders processed`);
         } catch (e) {
             console.warn('[UberEats Script] Failed to save recovery state:', e);
         }
@@ -130,7 +130,7 @@ GM_addStyle(`
             // Only use recovery state if it's less than 5 minutes old
             const ageMinutes = (Date.now() - state.timestamp) / 1000 / 60;
             if (ageMinutes > 5) {
-                console.log('[UberEats Script] Recovery state is too old, discarding');
+                log(' Recovery state is too old, discarding');
                 clearRecoveryState();
                 return null;
             }
@@ -193,23 +193,23 @@ GM_addStyle(`
             const interval = setInterval(() => {
                 // Look for the Close button with aria-label="Close" - this is the most reliable indicator
                 const closeButtons = document.querySelectorAll('button[aria-label="Close"]');
-                console.log(`[UberEats Script] waitForDrawerOpen: Found ${closeButtons.length} Close buttons`);
+                log(` waitForDrawerOpen: Found ${closeButtons.length} Close buttons`);
 
                 for (const closeBtn of closeButtons) {
                     // Check if the close button is actually visible
                     if (closeBtn.offsetParent !== null) {
-                        console.log(`[UberEats Script] waitForDrawerOpen: Found visible Close button`);
+                        log(` waitForDrawerOpen: Found visible Close button`);
                         // Find the drawer container - it's the ancestor with data-baseweb="drawer"
                         const drawer = closeBtn.closest('div[data-baseweb="drawer"]');
                         if (drawer) {
-                            console.log(`[UberEats Script] waitForDrawerOpen: Found drawer element via Close button`, drawer.className);
+                            log(` waitForDrawerOpen: Found drawer element via Close button`, drawer.className);
                             clearInterval(interval);
                             resolve(drawer);
                             return;
                         } else {
                             // If no data-baseweb="drawer", just use a parent container
                             const drawerContainer = closeBtn.closest('div[class*="_ap"]') || closeBtn.parentElement.parentElement;
-                            console.log(`[UberEats Script] waitForDrawerOpen: Found drawer container (no data-baseweb)`, drawerContainer ? drawerContainer.className : 'null');
+                            log(` waitForDrawerOpen: Found drawer container (no data-baseweb)`, drawerContainer ? drawerContainer.className : 'null');
                             clearInterval(interval);
                             resolve(drawerContainer);
                             return;
@@ -219,9 +219,9 @@ GM_addStyle(`
 
                 totalTime += intervalTime;
                 if (totalTime >= timeout) {
-                    console.log(`[UberEats Script] waitForDrawerOpen: Timeout after ${timeout}ms`);
+                    log(` waitForDrawerOpen: Timeout after ${timeout}ms`);
                     // Log all elements to debug
-                    console.log(`[UberEats Script] All elements with data-baseweb="drawer":`, document.querySelectorAll('div[data-baseweb="drawer"]'));
+                    log(` All elements with data-baseweb="drawer":`, document.querySelectorAll('div[data-baseweb="drawer"]'));
                     clearInterval(interval);
                     resolve(null);
                 }
@@ -306,7 +306,7 @@ GM_addStyle(`
     async function closeExistingDrawer() {
         const closeBtn = document.querySelector('button[aria-label="Close"]');
         if (closeBtn && closeBtn.offsetParent !== null) {
-            console.log('[UberEats Script] closeExistingDrawer: Found existing drawer, closing it...');
+            log(' closeExistingDrawer: Found existing drawer, closing it...');
             closeBtn.click();
             await waitForElementToDisappear('button[aria-label="Close"]', 3000);
             await new Promise(r => setTimeout(r, 300));
@@ -364,13 +364,13 @@ GM_addStyle(`
             return false;
         }
 
-        console.log('[UberEats Script] Resetting corrupted URL...');
+        log(' Resetting corrupted URL...');
         const cleanUrl = getCleanBaseUrl();
-        console.log(`[UberEats Script] Navigating to clean URL: ${cleanUrl}`);
+        log(` Navigating to clean URL: ${cleanUrl}`);
 
         try {
             window.history.replaceState({}, '', cleanUrl);
-            console.log('[UberEats Script] URL reset via replaceState');
+            log(' URL reset via replaceState');
             await new Promise(r => setTimeout(r, 500));
             await closeExistingDrawer();
             return true;
@@ -388,7 +388,7 @@ GM_addStyle(`
         // If we're on an order detail URL (has UUID in path), reset to clean list
         if (path.includes('/orders/') && path !== '/manager/orders') {
             const cleanUrl = getCleanBaseUrl();
-            console.log(`[UberEats Script] cleanupAfterOrder: Resetting URL to: ${cleanUrl}`);
+            log(` cleanupAfterOrder: Resetting URL to: ${cleanUrl}`);
             try {
                 window.history.replaceState({}, '', cleanUrl);
                 await new Promise(r => setTimeout(r, 200));
@@ -433,7 +433,7 @@ GM_addStyle(`
             if (i > 0) {
                 try {
                     window.history.replaceState({}, '', cleanUrl);
-                    console.log(`[UberEats Script] openDrawerForRow: Reset URL before attempt ${i + 1}`);
+                    log(` openDrawerForRow: Reset URL before attempt ${i + 1}`);
                     await new Promise(r => setTimeout(r, 300));
                 } catch (e) { }
             }
@@ -448,7 +448,7 @@ GM_addStyle(`
                 sessionStorage.setItem('ubereats_reload_recovery', 'true');
 
                 // Force full page reload to reset React state
-                console.log(`[UberEats Script] Reloading to URL: ${cleanUrl}`);
+                log(` Reloading to URL: ${cleanUrl}`);
                 window.location.href = cleanUrl;
 
                 // Wait for reload (this won't execute after reload)
@@ -457,7 +457,7 @@ GM_addStyle(`
             }
 
             const target = targets[i % targets.length];
-            console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: clicking <${target.tagName}>`);
+            log(` openDrawerForRow attempt ${i + 1}/${attempts}: clicking <${target.tagName}>`);
 
             simulateClick(target, isMobileDevice);
 
@@ -465,7 +465,7 @@ GM_addStyle(`
             const drawer = await waitForDrawerOpen(4000);
 
             if (drawer) {
-                console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: drawer opened!`);
+                log(` openDrawerForRow attempt ${i + 1}/${attempts}: drawer opened!`);
                 consecutiveEmptyDrawerCount = 0; // Reset counter on success
                 return drawer;
             }
@@ -474,12 +474,12 @@ GM_addStyle(`
             const closeButtons = document.querySelectorAll('button[aria-label="Close"]');
             if (closeButtons.length === 0) {
                 consecutiveEmptyDrawerCount++;
-                console.log(`[UberEats Script] openDrawerForRow: Empty drawer count: ${consecutiveEmptyDrawerCount}/${MAX_EMPTY_BEFORE_RELOAD}`);
+                log(` openDrawerForRow: Empty drawer count: ${consecutiveEmptyDrawerCount}/${MAX_EMPTY_BEFORE_RELOAD}`);
             } else {
                 consecutiveEmptyDrawerCount = 0; // Reset if drawer attempted to show
             }
 
-            console.log(`[UberEats Script] openDrawerForRow attempt ${i + 1}/${attempts}: no drawer`);
+            log(` openDrawerForRow attempt ${i + 1}/${attempts}: no drawer`);
 
             // After a failed click, IMMEDIATELY reset URL
             try {
@@ -511,17 +511,17 @@ GM_addStyle(`
 
     function extractOfferDataFromDrawer(drawer) {
         if (!drawer) {
-            console.log(`[UberEats Script] extractOfferDataFromDrawer: No drawer provided`);
+            log(` extractOfferDataFromDrawer: No drawer provided`);
             return { text: "—", value: 0 };
         }
 
         // Method 1: Look for the div structure with "Offers on items" text
         const allParagraphs = drawer.querySelectorAll('p');
-        console.log(`[UberEats Script] extractOfferDataFromDrawer: Found ${allParagraphs.length} paragraphs in drawer`);
+        log(` extractOfferDataFromDrawer: Found ${allParagraphs.length} paragraphs in drawer`);
 
         // Log first 10 paragraph texts for debugging
         const paragraphTexts = Array.from(allParagraphs).slice(0, 15).map(p => p.textContent.trim());
-        console.log(`[UberEats Script] extractOfferDataFromDrawer: First 15 paragraph texts:`, paragraphTexts);
+        log(` extractOfferDataFromDrawer: First 15 paragraph texts:`, paragraphTexts);
 
         for (const paragraph of allParagraphs) {
             const label = paragraph.textContent ? paragraph.textContent.trim() : "";
@@ -529,17 +529,17 @@ GM_addStyle(`
 
             // Look for "Offers on items" (with or without VAT text)
             if (/Offers on items/i.test(label)) {
-                console.log(`[UberEats Script] extractOfferDataFromDrawer: Found "Offers on items" in paragraph: "${label}"`);
+                log(` extractOfferDataFromDrawer: Found "Offers on items" in paragraph: "${label}"`);
 
                 // The value is in a sibling element. Walk up to find the parent container
                 const parentBlock = paragraph.closest('div[data-baseweb="block"]');
                 if (parentBlock) {
-                    console.log(`[UberEats Script] extractOfferDataFromDrawer: Found parent block`);
+                    log(` extractOfferDataFromDrawer: Found parent block`);
                     // Look for the sibling block that contains the value
                     const valueBlock = parentBlock.nextElementSibling;
                     if (valueBlock) {
                         const valueText = valueBlock.textContent;
-                        console.log(`[UberEats Script] extractOfferDataFromDrawer: Found value in next sibling: "${valueText}"`);
+                        log(` extractOfferDataFromDrawer: Found value in next sibling: "${valueText}"`);
                         return sanitizeOfferValue(valueText);
                     }
                 }
@@ -549,14 +549,14 @@ GM_addStyle(`
                 for (const monoPara of nearbyMonoParagraphs) {
                     const text = monoPara.textContent.trim();
                     if (text.includes('-') || text.includes('£')) {
-                        console.log(`[UberEats Script] extractOfferDataFromDrawer: Found value in nearby monoparagraph: "${text}"`);
+                        log(` extractOfferDataFromDrawer: Found value in nearby monoparagraph: "${text}"`);
                         return sanitizeOfferValue(text);
                     }
                 }
             }
         }
 
-        console.log(`[UberEats Script] extractOfferDataFromDrawer: No "Offers on items" found, returning default`);
+        log(` extractOfferDataFromDrawer: No "Offers on items" found, returning default`);
         return { text: "—", value: 0 };
     }
 
@@ -701,7 +701,7 @@ GM_addStyle(`
             if (!text) continue;
 
             if (/^(Subtotal|Item total)/i.test(text)) {
-                console.log(`[UberEats Script] extractSubtotalFromDrawer: Found potential label: "${text}" in <${el.tagName}>`);
+                log(` extractSubtotalFromDrawer: Found potential label: "${text}" in <${el.tagName}>`);
                 foundSubtotalLabel = true;
 
                 // Strategy A: Look for the value in the next sibling element
@@ -709,7 +709,7 @@ GM_addStyle(`
                 if (sibling) {
                     const val = sibling.textContent.trim();
                     if (/£|[\d.]+/.test(val)) {
-                        console.log(`[UberEats Script] extractSubtotalFromDrawer: Found value in next sibling: "${val}"`);
+                        log(` extractSubtotalFromDrawer: Found value in next sibling: "${val}"`);
                         return { text: val, value: parseFloat(val.replace(/[^\d.-]/g, '')) };
                     }
                 }
@@ -721,7 +721,7 @@ GM_addStyle(`
                     if (parentSibling) {
                         const val = parentSibling.textContent.trim();
                         if (/£|[\d.]+/.test(val)) {
-                            console.log(`[UberEats Script] extractSubtotalFromDrawer: Found value in parent's sibling: "${val}"`);
+                            log(` extractSubtotalFromDrawer: Found value in parent's sibling: "${val}"`);
                             return { text: val, value: parseFloat(val.replace(/[^\d.-]/g, '')) };
                         }
                     }
@@ -731,7 +731,7 @@ GM_addStyle(`
                         if (child === el) continue;
                         const val = child.textContent.trim();
                         if (/£|[\d.]+/.test(val) && val.length < 20) { // Value shouldn't be too long
-                            console.log(`[UberEats Script] extractSubtotalFromDrawer: Found value in parent's other child: "${val}"`);
+                            log(` extractSubtotalFromDrawer: Found value in parent's other child: "${val}"`);
                             return { text: val, value: parseFloat(val.replace(/[^\d.-]/g, '')) };
                         }
                     }
@@ -747,7 +747,7 @@ GM_addStyle(`
                     debugTexts.push(el.textContent.trim());
                 }
             });
-            console.log(`[UberEats Script] extractSubtotalFromDrawer: Subtotal label NOT found. Content dump (first 50 leaf nodes):`, debugTexts.slice(0, 50));
+            log(` extractSubtotalFromDrawer: Subtotal label NOT found. Content dump (first 50 leaf nodes):`, debugTexts.slice(0, 50));
         }
 
         return { text: "—", value: 0 };
@@ -778,7 +778,7 @@ GM_addStyle(`
                     for (const pattern of datePatterns) {
                         const match = text.match(pattern);
                         if (match) {
-                            console.log(`[DEBUG] Date found via Strategy 1 (near Order ID): "${match[0]}"`);
+                            logDebug(` Date found via Strategy 1 (near Order ID): "${match[0]}"`);
                             return match[0];
                         }
                     }
@@ -793,7 +793,7 @@ GM_addStyle(`
             for (const pattern of datePatterns) {
                 const match = text.match(pattern);
                 if (match) {
-                    console.log(`[DEBUG] Date found via Strategy 2 (broad search): "${match[0]}"`);
+                    logDebug(` Date found via Strategy 2 (broad search): "${match[0]}"`);
                     return match[0];
                 }
             }
@@ -804,7 +804,7 @@ GM_addStyle(`
         for (const pattern of datePatterns) {
             const match = drawerText.match(pattern);
             if (match) {
-                console.log(`[DEBUG] Date found via Strategy 3 (full text scan): "${match[0]}"`);
+                logDebug(` Date found via Strategy 3 (full text scan): "${match[0]}"`);
                 return match[0];
             }
         }
@@ -830,7 +830,7 @@ GM_addStyle(`
                         month: 'short',
                         day: 'numeric'
                     });
-                    console.log(`[DEBUG] Using URL start date as fallback: "${formattedDate}"`);
+                    logDebug(` Using URL start date as fallback: "${formattedDate}"`);
                     return formattedDate;
                 }
             }
@@ -970,12 +970,12 @@ GM_addStyle(`
 
     async function waitForOrderToLoadInDrawer(drawer, expectedOrderId, timeout = 6000) {
         const start = Date.now();
-        console.log(`[UberEats Script] Validating drawer content for Order ID: "${expectedOrderId}"...`);
+        log(` Validating drawer content for Order ID: "${expectedOrderId}"...`);
         while (Date.now() - start < timeout) {
             const text = drawer.textContent || '';
             // Case-insensitive check for safety
             if (text.toLowerCase().includes(expectedOrderId.toLowerCase())) {
-                console.log(`[UberEats Script] Drawer validation successful: Found "${expectedOrderId}"`);
+                log(` Drawer validation successful: Found "${expectedOrderId}"`);
                 return true;
             }
             await new Promise(resolve => setTimeout(resolve, 200));
@@ -996,9 +996,9 @@ GM_addStyle(`
         try {
             if ('wakeLock' in navigator) {
                 wakeLock = await navigator.wakeLock.request('screen');
-                console.log('[UberEats Script] Wake Lock activated - screen will stay on during processing');
+                log(' Wake Lock activated - screen will stay on during processing');
                 wakeLock.addEventListener('release', () => {
-                    console.log('[UberEats Script] Wake Lock released');
+                    log(' Wake Lock released');
                 });
             }
         } catch (err) {
@@ -1008,7 +1008,7 @@ GM_addStyle(`
         // Clear data from any previous runs UNLESS we're resuming from recovery
         const hasRecoveredData = window.processedOrderIds && window.processedOrderIds.size > 0;
         if (hasRecoveredData) {
-            console.log(`[UberEats Script] Resuming with ${window.processedOrderIds.size} previously processed orders`);
+            log(` Resuming with ${window.processedOrderIds.size} previously processed orders`);
         } else {
             window.orderOfferData = {};
             window.orderIssueData = {};
@@ -1054,8 +1054,8 @@ GM_addStyle(`
             return;
         }
 
-        console.log(`[UberEats Script] Starting streaming processing for ${totalOrderCount} orders...`);
-        console.log(`[UberEats Script] Scrollable element:`, scrollableElement);
+        log(` Starting streaming processing for ${totalOrderCount} orders...`);
+        log(` Scrollable element:`, scrollableElement);
 
         // --- STREAMING APPROACH: Process visible rows, then scroll for more ---
         let stuckCount = 0;
@@ -1081,7 +1081,7 @@ GM_addStyle(`
                 const currentCount = window.processedOrderIds.size;
                 button.textContent = `Processing... (${currentCount + 1}/${totalOrderCount})`;
 
-                console.log(`[UberEats Script] Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
+                log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
 
                 // Extract subtotal from the TABLE ROW (last cell) BEFORE opening drawer
                 const rowSubtotalCell = row.lastElementChild;
@@ -1091,7 +1091,7 @@ GM_addStyle(`
                     const numericValue = parseFloat(rawText.replace(/[^0-9.]/g, '')) || 0;
                     if (numericValue > 0) {
                         subtotal = { text: rawText, value: numericValue };
-                        console.log(`[UberEats Script] Order ${orderId}: Extracted subtotal from row: "${rawText}" = £${numericValue}`);
+                        log(` Order ${orderId}: Extracted subtotal from row: "${rawText}" = £${numericValue}`);
                     }
                 }
 
@@ -1100,7 +1100,7 @@ GM_addStyle(`
                 await new Promise(resolve => setTimeout(resolve, 300));
 
                 // Open drawer
-                console.log(`[UberEats Script] Order ${orderId}: Attempting to open drawer...`);
+                log(` Order ${orderId}: Attempting to open drawer...`);
                 let drawer = await openDrawerForRow(row, 5);
                 let offer = { text: "—", value: 0 };
                 let issue = "—";
@@ -1120,13 +1120,13 @@ GM_addStyle(`
                             console.error(`[UberEats Script] Order ${orderId}: ❌ Validation failed after retry. Skipping.`);
                             drawer = null;
                         } else {
-                            console.log(`[UberEats Script] Order ${orderId}: Validation successful after retry.`);
+                            log(` Order ${orderId}: Validation successful after retry.`);
                         }
                     }
                 }
 
                 if (drawer) {
-                    console.log(`[UberEats Script] Order ${orderId}: Drawer opened & verified, extracting data...`);
+                    log(` Order ${orderId}: Drawer opened & verified, extracting data...`);
                     await waitForDrawerContent(drawer, 8000);
                     offer = extractOfferDataFromDrawer(drawer);
                     issue = extractIssueDataFromDrawer(drawer);
@@ -1139,12 +1139,12 @@ GM_addStyle(`
                     window.orderDateData[orderId] = date;
 
                     if (cancelled) {
-                        console.log(`[UberEats Script] Order ${orderId}: ⚠️ CANCELLED ORDER DETECTED`);
+                        log(` Order ${orderId}: ⚠️ CANCELLED ORDER DETECTED`);
                     }
 
-                    console.log(`[UberEats Script] Order ${orderId}: offer="${offer.text}", subtotal="${subtotal.text}", items=${items.length}, date="${date}", cancelled=${cancelled}`);
+                    log(` Order ${orderId}: offer="${offer.text}", subtotal="${subtotal.text}", items=${items.length}, date="${date}", cancelled=${cancelled}`);
                 } else {
-                    console.log(`[UberEats Script] Order ${orderId}: Drawer timeout or validation failed`);
+                    log(` Order ${orderId}: Drawer timeout or validation failed`);
                     issue = "Drawer Error";
                     window.orderCancelledData[orderId] = false;
                 }
@@ -1224,7 +1224,7 @@ GM_addStyle(`
                         runningPorkCount += orderPorkCount;
                         runningBeefCount += orderBeefCount;
 
-                        if (DEBUG) console.log(`[UberEats Script] Order ${orderId}: +Tofu=${orderTofuCount} +Pork=${orderPorkCount} +Beef=${orderBeefCount} | Running: Tofu=${runningTofuCount} Pork=${runningPorkCount} Beef=${runningBeefCount}`);
+                        if (DEBUG) log(` Order ${orderId}: +Tofu=${orderTofuCount} +Pork=${orderPorkCount} +Beef=${orderBeefCount} | Running: Tofu=${runningTofuCount} Pork=${runningPorkCount} Beef=${runningBeefCount}`);
                     }
 
                     // Update the running count cells in this row
@@ -1265,7 +1265,7 @@ GM_addStyle(`
                 }
 
                 window.processedOrderIds.add(orderId);
-                console.log(`[UberEats Script] Order ${orderId}: ✓ Added to processedOrderIds (total: ${window.processedOrderIds.size})`);
+                log(` Order ${orderId}: ✓ Added to processedOrderIds (total: ${window.processedOrderIds.size})`);
                 processedThisRound++;
 
                 // Close the drawer
@@ -1293,13 +1293,13 @@ GM_addStyle(`
                 // Clean up URL to prevent UUID accumulation
                 await cleanupAfterOrder();
 
-                console.log(`[UberEats Script] Order ${orderId}: Complete\n`);
+                log(` Order ${orderId}: Complete\n`);
             }
 
             // 3. Check if we made progress
             if (window.processedOrderIds.size === lastProcessedCount) {
                 stuckCount++;
-                console.log(`[UberEats Script] No new orders processed this round (stuck count: ${stuckCount}). Scrolling to load more...`);
+                log(` No new orders processed this round (stuck count: ${stuckCount}). Scrolling to load more...`);
             } else {
                 stuckCount = 0;
                 lastProcessedCount = window.processedOrderIds.size;
@@ -1333,7 +1333,7 @@ GM_addStyle(`
             }
         }
 
-        console.log(`[UberEats Script] Finished processing. ${window.processedOrderIds.size} of ${totalOrderCount} orders processed.`);
+        log(` Finished processing. ${window.processedOrderIds.size} of ${totalOrderCount} orders processed.`);
 
         if (window.processedOrderIds.size < totalOrderCount) {
             Swal.fire('Processing Warning', `Only processed ${window.processedOrderIds.size} of ${totalOrderCount} orders. Some orders may not have loaded.`, 'warning');
@@ -1347,7 +1347,7 @@ GM_addStyle(`
         if (wakeLock) {
             try {
                 await wakeLock.release();
-                console.log('[UberEats Script] Wake Lock released - screen can sleep again');
+                log(' Wake Lock released - screen can sleep again');
             } catch (err) {
                 console.warn('[UberEats Script] Failed to release Wake Lock:', err);
             }
@@ -1363,9 +1363,9 @@ GM_addStyle(`
         let finalTotalDiscountedItems = 0;
 
         // *** DIAGNOSTIC: Check for orders with UI data that aren't in processedOrderIds ***
-        console.log(`\n========== PRE-AGGREGATION DIAGNOSTIC ==========`);
-        console.log(`[DIAGNOSTIC] Total orders in processedOrderIds: ${window.processedOrderIds.size}`);
-        console.log(`[DIAGNOSTIC] Orders in set: ${Array.from(window.processedOrderIds).join(', ')}`);
+        logDebug(`\n========== PRE-AGGREGATION DIAGNOSTIC ==========`);
+        logDebug(`[DIAGNOSTIC] Total orders in processedOrderIds: ${window.processedOrderIds.size}`);
+        logDebug(`[DIAGNOSTIC] Orders in set: ${Array.from(window.processedOrderIds).join(', ')}`);
 
         // Scan all table rows to find orders with offer data in UI
         const allRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
@@ -1395,7 +1395,7 @@ GM_addStyle(`
             }
         });
 
-        console.log(`[DIAGNOSTIC] Orders with UI data (offer column populated): ${ordersWithUIData.length}`);
+        logDebug(`[DIAGNOSTIC] Orders with UI data (offer column populated): ${ordersWithUIData.length}`);
 
         if (missingFromSet.length > 0) {
             console.error(`[DIAGNOSTIC] ⚠️ FOUND ${missingFromSet.length} ORDERS WITH UI DATA BUT NOT IN processedOrderIds:`);
@@ -1404,22 +1404,22 @@ GM_addStyle(`
                 // Try to add missing orders to the set for aggregation
                 // Check if we have stored data for this order
                 if (window.orderOfferData[o.orderId]) {
-                    console.log(`  → Adding ${o.orderId} to processedOrderIds for aggregation`);
+                    logDebug(`  → Adding ${o.orderId} to processedOrderIds for aggregation`);
                     window.processedOrderIds.add(o.orderId);
                 } else {
                     console.warn(`  → ${o.orderId} has no stored offer data, cannot recover`);
                 }
             });
         } else {
-            console.log(`[DIAGNOSTIC] ✓ All orders with UI data are in processedOrderIds`);
+            logDebug(`[DIAGNOSTIC] ✓ All orders with UI data are in processedOrderIds`);
         }
-        console.log(`========== END DIAGNOSTIC ==========\n`);
+        logDebug(`========== END DIAGNOSTIC ==========\n`);
 
         for (const orderId of window.processedOrderIds) {
             // Skip cancelled orders - they should not be counted at all
             const isCancelled = window.orderCancelledData[orderId] === true;
             if (isCancelled) {
-                console.log(`[UberEats Script] Order ${orderId}: ⚠️ CANCELLED - skipping from aggregation`);
+                log(` Order ${orderId}: ⚠️ CANCELLED - skipping from aggregation`);
                 continue;
             }
 
@@ -1471,10 +1471,10 @@ GM_addStyle(`
                 // Process items with BOGO-aware logic
                 if (items.length > 0) {
                     // DEBUG: Log ALL items in this order
-                    console.log(`\n========== ORDER ${orderId} ANALYSIS ==========`);
-                    console.log(`[DEBUG] All items in order (${items.length} total):`);
+                    logDebug(`\n========== ORDER ${orderId} ANALYSIS ==========`);
+                    logDebug(` All items in order (${items.length} total):`);
                     items.forEach((item, idx) => {
-                        console.log(`  [${idx}] "${item.name}" - Price: £${item.priceValue}, Qty: ${item.quantity}, Total: £${(item.priceValue * item.quantity).toFixed(2)}`);
+                        logDebug(`  [${idx}] "${item.name}" - Price: £${item.priceValue}, Qty: ${item.quantity}, Total: £${(item.priceValue * item.quantity).toFixed(2)}`);
                     });
 
                     const offerAbs = Math.abs(offer.value);
@@ -1505,9 +1505,9 @@ GM_addStyle(`
                     // Log if we detected split-line items
                     const splitLineItems = consolidatedItems.filter(item => item.isSplitLine);
                     if (splitLineItems.length > 0) {
-                        console.log(`[DEBUG] Split-line items detected and consolidated:`);
+                        logDebug(` Split-line items detected and consolidated:`);
                         splitLineItems.forEach(item => {
-                            console.log(`  - "${item.name}": Combined qty=${item.quantity}, Combined price=£${item.priceValue.toFixed(2)}`);
+                            logDebug(`  - "${item.name}": Combined qty=${item.quantity}, Combined price=£${item.priceValue.toFixed(2)}`);
                         });
                     }
 
@@ -1519,15 +1519,15 @@ GM_addStyle(`
 
                     const nonBogoItems = consolidatedItems.filter(item => !bogoMealPattern.test(item.name));
                     if (nonBogoItems.length > 0) {
-                        console.log(`[DEBUG] Non-BOGO items excluded from counting:`);
+                        logDebug(` Non-BOGO items excluded from counting:`);
                         nonBogoItems.forEach(item => {
-                            console.log(`  - "${item.name}" (no meal combo prefix, skipping)`);
+                            logDebug(`  - "${item.name}" (no meal combo prefix, skipping)`);
                         });
                     }
 
                     // STEP 1: Find all items that could be BOGO candidates (qty >= 2) from BOGO-ELIGIBLE items only
                     const bogoCandidates = bogoEligibleItems.filter(item => item.quantity >= 2);
-                    console.log(`[DEBUG] BOGO candidates (qty >= 2): ${bogoCandidates.length} items`);
+                    logDebug(` BOGO candidates (qty >= 2): ${bogoCandidates.length} items`);
 
                     // STEP 2: Check for MULTI-BOGO scenario
                     // Calculate sum of expected BOGO discounts for ALL candidates
@@ -1540,15 +1540,15 @@ GM_addStyle(`
 
                     const multiBogoMatch = bogoCandidates.length >= 2 && Math.abs(offerAbs - totalExpectedDiscount) < 2.0;
 
-                    console.log(`[DEBUG] Multi-BOGO Check:`);
-                    console.log(`  - Total expected discount (sum of 50% of each): £${totalExpectedDiscount.toFixed(2)}`);
-                    console.log(`  - Offer value: £${offerAbs.toFixed(2)}`);
-                    console.log(`  - Difference: £${Math.abs(offerAbs - totalExpectedDiscount).toFixed(2)}`);
-                    console.log(`  - Is Multi-BOGO: ${multiBogoMatch}`);
+                    logDebug(` Multi-BOGO Check:`);
+                    logDebug(`  - Total expected discount (sum of 50% of each): £${totalExpectedDiscount.toFixed(2)}`);
+                    logDebug(`  - Offer value: £${offerAbs.toFixed(2)}`);
+                    logDebug(`  - Difference: £${Math.abs(offerAbs - totalExpectedDiscount).toFixed(2)}`);
+                    logDebug(`  - Is Multi-BOGO: ${multiBogoMatch}`);
 
                     if (multiBogoMatch) {
                         // MULTI-BOGO: Count each BOGO candidate with HALVED quantity (BOGO pairs, not total items)
-                        console.log(`[DEBUG] ✓ MULTI-BOGO DETECTED! Processing ${bogoCandidates.length} items at HALVED quantity:`);
+                        logDebug(` ✓ MULTI-BOGO DETECTED! Processing ${bogoCandidates.length} items at HALVED quantity:`);
                         let orderItemsDesc = [];
                         bogoCandidates.forEach(item => {
                             const quantityToAdd = Math.floor(item.quantity / 2); // HALVED quantity for BOGO pairs
@@ -1559,7 +1559,7 @@ GM_addStyle(`
                             const previousCount = summaryByDate[date].itemCounts[itemKey];
                             summaryByDate[date].itemCounts[itemKey] += quantityToAdd;
                             summaryByDate[date].totalDiscountedItems += quantityToAdd;
-                            console.log(`  - "${itemKey}": ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
+                            logDebug(`  - "${itemKey}": ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
                             // Extract short item type (Beef/Tofu/Pork) from name
                             let shortName = 'Other';
                             if (itemKey.includes('Beef')) shortName = 'Beef';
@@ -1576,14 +1576,14 @@ GM_addStyle(`
                     } else {
                         // SINGLE-ITEM BOGO: Use bogoEligibleItems (only meal combos with (1)/(2)/(3) prefix)
                         if (bogoEligibleItems.length === 0) {
-                            console.log(`[DEBUG] No BOGO-eligible items found (no items with meal combo prefix)`);
-                            console.log(`========== END ORDER ${orderId} ==========\n`);
+                            logDebug(` No BOGO-eligible items found (no items with meal combo prefix)`);
+                            logDebug(`========== END ORDER ${orderId} ==========\n`);
                             continue;
                         }
                         const sortedItems = [...bogoEligibleItems].sort((a, b) => b.priceValue - a.priceValue);
                         const highestPricedItem = sortedItems[0];
 
-                        console.log(`[DEBUG] Single-item BOGO check for: "${highestPricedItem.name}"`);
+                        logDebug(` Single-item BOGO check for: "${highestPricedItem.name}"`);
 
                         const unitPrice = highestPricedItem.priceValue;
                         const expectedBogoDiscount = unitPrice / 2;
@@ -1593,18 +1593,18 @@ GM_addStyle(`
                         const diffCheck = diff < 2.0;
                         const isBogo = qtyCheck && diffCheck;
 
-                        console.log(`[DEBUG] BOGO Calculation Details:`);
-                        console.log(`  - Offer value: £${offer.value} (Absolute: £${offerAbs.toFixed(2)})`);
-                        console.log(`  - Unit price of item: £${unitPrice.toFixed(2)}`);
-                        console.log(`  - Expected BOGO discount (50% of unit): £${expectedBogoDiscount.toFixed(2)}`);
-                        console.log(`  - Difference: |${offerAbs.toFixed(2)} - ${expectedBogoDiscount.toFixed(2)}| = ${diff.toFixed(4)}`);
-                        console.log(`  - Quantity check (qty >= 2): ${highestPricedItem.quantity} >= 2 = ${qtyCheck}`);
-                        console.log(`  - Difference check (diff < 2.0): ${diff.toFixed(4)} < 2.0 = ${diffCheck}`);
-                        console.log(`  - FINAL BOGO RESULT: ${isBogo}`);
+                        logDebug(` BOGO Calculation Details:`);
+                        logDebug(`  - Offer value: £${offer.value} (Absolute: £${offerAbs.toFixed(2)})`);
+                        logDebug(`  - Unit price of item: £${unitPrice.toFixed(2)}`);
+                        logDebug(`  - Expected BOGO discount (50% of unit): £${expectedBogoDiscount.toFixed(2)}`);
+                        logDebug(`  - Difference: |${offerAbs.toFixed(2)} - ${expectedBogoDiscount.toFixed(2)}| = ${diff.toFixed(4)}`);
+                        logDebug(`  - Quantity check (qty >= 2): ${highestPricedItem.quantity} >= 2 = ${qtyCheck}`);
+                        logDebug(`  - Difference check (diff < 2.0): ${diff.toFixed(4)} < 2.0 = ${diffCheck}`);
+                        logDebug(`  - FINAL BOGO RESULT: ${isBogo}`);
 
                         // Always use HALVED quantity - we count BOGO pairs, not total items made
                         const quantityToAdd = Math.floor(highestPricedItem.quantity / 2);
-                        console.log(`[DEBUG] Using HALVED quantity: ${quantityToAdd} (BOGO pairs)`);
+                        logDebug(` Using HALVED quantity: ${quantityToAdd} (BOGO pairs)`);
 
                         const itemKey = highestPricedItem.name;
                         if (!summaryByDate[date].itemCounts[itemKey]) {
@@ -1614,7 +1614,7 @@ GM_addStyle(`
                         summaryByDate[date].itemCounts[itemKey] += quantityToAdd;
                         summaryByDate[date].totalDiscountedItems += quantityToAdd;
 
-                        console.log(`[DEBUG] AGGREGATION: "${itemKey}" ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
+                        logDebug(` AGGREGATION: "${itemKey}" ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
 
                         // Track order details for debugging
                         let shortName = 'Other';
@@ -1628,13 +1628,13 @@ GM_addStyle(`
                         });
                     }
 
-                    console.log(`========== END ORDER ${orderId} ==========\n`);
+                    logDebug(`========== END ORDER ${orderId} ==========\n`);
                 } else {
-                    console.log(`[UberEats Script] Order ${orderId}: No items found to attribute offer to.`);
+                    log(` Order ${orderId}: No items found to attribute offer to.`);
                 }
             } else {
                 // No offer value - skip counting items for this order
-                console.log(`[UberEats Script] Order ${orderId}: No offer value (Value=${offer ? offer.value : 'null'}), skipping item count.`);
+                log(` Order ${orderId}: No offer value (Value=${offer ? offer.value : 'null'}), skipping item count.`);
             }
         }
 
@@ -1644,15 +1644,15 @@ GM_addStyle(`
         }
 
         // DEBUG: Print final summary of all item counts
-        console.log(`\n\n========== FINAL ITEM COUNT SUMMARY ==========`);
+        logDebug(`\n\n========== FINAL ITEM COUNT SUMMARY ==========`);
         for (const date of Object.keys(summaryByDate)) {
-            console.log(`Date: ${date}`);
+            logDebug(`Date: ${date}`);
             const counts = summaryByDate[date].itemCounts;
             for (const [itemName, count] of Object.entries(counts)) {
-                console.log(`  - "${itemName}": ${count}`);
+                logDebug(`  - "${itemName}": ${count}`);
             }
         }
-        console.log(`================================================\n`);
+        logDebug(`================================================\n`);
 
         // Build HTML table
         let tableHTML = `
@@ -1758,10 +1758,10 @@ GM_addStyle(`
                 const rows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
 
                 if (resultsText && rows.length > 0) {
-                    console.log(`[UberEats Script] Orders loaded: "${resultsText.textContent}" with ${rows.length} rows`);
+                    log(` Orders loaded: "${resultsText.textContent}" with ${rows.length} rows`);
                     resolve(true);
                 } else if (Date.now() - startTime > maxWaitMs) {
-                    console.log('[UberEats Script] Timeout waiting for orders to load');
+                    log(' Timeout waiting for orders to load');
                     resolve(false);
                 } else {
                     setTimeout(check, 200);
@@ -1775,7 +1775,7 @@ GM_addStyle(`
         // Only run on orders page
         if (!window.location.href.includes('/manager/orders')) {
             if (isInitialized) {
-                console.log('[UberEats Script] Left orders page, resetting state');
+                log(' Left orders page, resetting state');
                 isInitialized = false;
                 if (scrollObserver) {
                     scrollObserver.disconnect();
@@ -1788,7 +1788,7 @@ GM_addStyle(`
         // Look for the "Showing X results" text
         const resultsText = findElementByText('div', 'Showing', 'results');
         if (resultsText && !isInitialized) {
-            console.log('[UberEats Script] Orders page detected, initializing...');
+            log(' Orders page detected, initializing...');
             addButton(); // Add the button
             updateNewRows(); // Add cells to rows that are already there
             isInitialized = true;
@@ -1801,13 +1801,13 @@ GM_addStyle(`
                 const scrollTarget = document.querySelector('.infinite-scroll-component');
                 if (scrollTarget) {
                     scrollObserver.observe(scrollTarget, { childList: true });
-                    console.log('[UberEats Script] Scroll observer started');
+                    log(' Scroll observer started');
                 }
             }
 
             // *** RECOVERY MODE CHECK ***
             if (isRecoveryMode()) {
-                console.log('[UberEats Script] Recovery mode detected - restoring state and resuming...');
+                log(' Recovery mode detected - restoring state and resuming...');
                 const recoveryState = loadStateFromSession();
                 if (recoveryState) {
                     window.processedOrderIds = new Set(recoveryState.processedOrderIds);
@@ -1817,17 +1817,17 @@ GM_addStyle(`
                     window.orderDateData = recoveryState.orderDateData;
                     window.orderCancelledData = recoveryState.orderCancelledData;
 
-                    console.log(`[UberEats Script] Restored ${window.processedOrderIds.size} processed orders from recovery state`);
+                    log(` Restored ${window.processedOrderIds.size} processed orders from recovery state`);
                     clearRecoveryState();
 
                     (async () => {
                         await waitForOrdersToLoad();
                         await new Promise(r => setTimeout(r, 500));
-                        console.log('[UberEats Script] Auto-resuming processing after recovery...');
+                        log(' Auto-resuming processing after recovery...');
                         processOrders();
                     })();
                 } else {
-                    console.log('[UberEats Script] No valid recovery state found, clearing flags');
+                    log(' No valid recovery state found, clearing flags');
                     clearRecoveryState();
                 }
             }
@@ -1836,7 +1836,7 @@ GM_addStyle(`
 
     // Handle URL change (called from multiple sources)
     async function handleUrlChange() {
-        console.log(`[UberEats Script] URL change detected: ${window.location.href}`);
+        log(` URL change detected: ${window.location.href}`);
         lastUrl = window.location.href;
         isInitialized = false;
 
@@ -1848,7 +1848,7 @@ GM_addStyle(`
 
         // If we're on orders page, wait for orders to load dynamically
         if (window.location.href.includes('/manager/orders')) {
-            console.log('[UberEats Script] Navigated to orders page, waiting for orders to load...');
+            log(' Navigated to orders page, waiting for orders to load...');
             const loaded = await waitForOrdersToLoad();
             if (loaded) {
                 initializeOnOrdersPage();
@@ -1862,7 +1862,7 @@ GM_addStyle(`
 
     history.pushState = function (...args) {
         originalPushState.apply(this, args);
-        console.log('[UberEats Script] history.pushState intercepted');
+        log(' history.pushState intercepted');
         if (window.location.href !== lastUrl) {
             handleUrlChange();
         }
@@ -1870,7 +1870,7 @@ GM_addStyle(`
 
     history.replaceState = function (...args) {
         originalReplaceState.apply(this, args);
-        console.log('[UberEats Script] history.replaceState intercepted');
+        log(' history.replaceState intercepted');
         if (window.location.href !== lastUrl) {
             handleUrlChange();
         }
@@ -1878,7 +1878,7 @@ GM_addStyle(`
 
     // Listen for popstate (browser back/forward)
     window.addEventListener('popstate', () => {
-        console.log('[UberEats Script] popstate event');
+        log(' popstate event');
         if (window.location.href !== lastUrl) {
             handleUrlChange();
         }
@@ -1887,7 +1887,7 @@ GM_addStyle(`
     // Fallback: Poll URL every 500ms in case other methods fail
     urlCheckInterval = setInterval(() => {
         if (window.location.href !== lastUrl) {
-            console.log('[UberEats Script] URL change detected via polling');
+            log(' URL change detected via polling');
             handleUrlChange();
         }
     }, 500);
@@ -1909,7 +1909,7 @@ GM_addStyle(`
     const targetNode = document.getElementById('root');
     if (targetNode) {
         mainObserver.observe(targetNode, { childList: true, subtree: true });
-        console.log('[UberEats Script] Observer started with History API interception');
+        log(' Observer started with History API interception');
     }
 
     // Initial check
