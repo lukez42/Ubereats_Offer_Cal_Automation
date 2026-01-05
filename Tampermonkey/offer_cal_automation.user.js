@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      7.4
+// @version      7.5
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -1005,9 +1005,9 @@ GM_addStyle(`
         try {
             if ('wakeLock' in navigator) {
                 wakeLock = await navigator.wakeLock.request('screen');
-                log(' Wake Lock activated - screen will stay on during processing');
+                console.log('[UberEats Script] Wake Lock activated - screen will stay on');
                 wakeLock.addEventListener('release', () => {
-                    log(' Wake Lock released');
+                    console.log('[UberEats Script] Wake Lock released');
                 });
             }
         } catch (err) {
@@ -1758,38 +1758,48 @@ GM_addStyle(`
     }
 
     function setupScrollAutoHide(button) {
-        const scrollContainer = document.querySelector('.infinite-scroll-component');
-        if (!scrollContainer) return;
+        // Try multiple possible scroll containers
+        const scrollContainer = document.querySelector('.infinite-scroll-component')
+            || document.querySelector('[class*="OrdersList"]')
+            || document.querySelector('main')
+            || document.body;
 
-        const SCROLL_THRESHOLD = 10; // Minimum scroll distance to trigger hide/show
+        const SCROLL_THRESHOLD = 50; // Minimum scroll distance to trigger hide/show
+        let accumulatedDelta = 0;
 
-        scrollContainer.addEventListener('scroll', () => {
+        // Use wheel event which works everywhere, including over the table
+        const handleWheel = (e) => {
             // Don't hide while processing
             if (button.classList.contains('loading')) return;
-
-            const currentScrollTop = scrollContainer.scrollTop;
-            const scrollDelta = currentScrollTop - lastScrollTop;
 
             // Clear any pending timeout
             if (scrollHideTimeout) {
                 clearTimeout(scrollHideTimeout);
             }
 
-            if (scrollDelta > SCROLL_THRESHOLD) {
+            // Accumulate scroll delta
+            accumulatedDelta += e.deltaY;
+
+            if (accumulatedDelta > SCROLL_THRESHOLD) {
                 // Scrolling DOWN - hide button
                 button.classList.add('hidden');
-            } else if (scrollDelta < -SCROLL_THRESHOLD) {
+                accumulatedDelta = 0;
+            } else if (accumulatedDelta < -SCROLL_THRESHOLD) {
                 // Scrolling UP - show button
                 button.classList.remove('hidden');
+                accumulatedDelta = 0;
             }
-
-            lastScrollTop = currentScrollTop;
 
             // Auto-show button after 1.5s of no scrolling
             scrollHideTimeout = setTimeout(() => {
                 button.classList.remove('hidden');
+                accumulatedDelta = 0;
             }, 1500);
-        }, { passive: true });
+        };
+
+        // Listen on the main content area and the document
+        scrollContainer.addEventListener('wheel', handleWheel, { passive: true });
+        document.addEventListener('wheel', handleWheel, { passive: true });
     }
 
     // --- Use an observer to add the button and new cells ---
