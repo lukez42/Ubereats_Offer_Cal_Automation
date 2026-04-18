@@ -171,9 +171,7 @@ Potential improvements for consideration if performance degrades on older device
 
 - **Cache DOM selectors** - Reduce repeated `querySelector` calls
 - **Debounce scroll/touch events** - Limit event handler frequency
-- **Low-power mode detection** - Reduce animation complexity automatically
 - **requestAnimationFrame** - Smoother UI updates
-- **Lazy-load SweetAlert2** - Load only when summary popup is needed
 
 ## License
 

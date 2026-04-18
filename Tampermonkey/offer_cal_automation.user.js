@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.0
+// @version      9.1
 // @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
 // @author       Gemini Assistant
 // @match        https://merchants.ubereats.com/manager/*
@@ -9,7 +9,6 @@
 // @downloadURL  https://raw.githubusercontent.com/lukez42/Ubereats_Offer_Cal_Automation/main/Tampermonkey/offer_cal_automation.user.js
 // @grant        GM_addStyle
 // @grant        window.fetch
-// @require      https://cdn.jsdelivr.net/npm/sweetalert2@11
 // ==/UserScript==
 
 /* --- This is the CSS that styles the new button and offer text --- */
@@ -270,10 +269,43 @@ GM_addStyle(`
         stroke-linecap: round;
         transition: stroke-dashoffset 0.3s ease;
     }
+    
+    /* Low-Power Mode / Reduced Motion Optimizations */
+    @media (prefers-reduced-motion: reduce) {
+        #fetch-offer-data-btn,
+        #fetch-offer-data-btn .progress-fill,
+        #processing-overlay .glow-pulse,
+        #processing-overlay .progress-ring-fill,
+        tr.processing-active-row {
+            animation: none !important;
+            transition: none !important;
+        }
+        
+        #processing-overlay .glow-pulse {
+            opacity: 0.5 !important;
+        }
+        
+        .animated-dots:after {
+            animation: none !important;
+            content: '...' !important;
+        }
+    }
 `);
 
 (function () {
     'use strict';
+
+    // Helper to dynamically load SweetAlert2 only when needed
+    async function loadSweetAlert() {
+        if (window.Swal) return;
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+    }
 
     // *** CONFIGURATION ***
     const DEBUG = false; // Set to true to enable verbose console logging
@@ -1363,6 +1395,7 @@ GM_addStyle(`
         // 1. Get total count
         const totalOrderCount = getTotalOrderCount();
         if (totalOrderCount === null) {
+            await loadSweetAlert();
             Swal.fire('Error', 'Could not find total order count (e.g., "Showing 76 results"). Make sure it is visible on the page.', 'error');
             button.classList.remove('loading');
             hideProcessingOverlay();
@@ -1372,6 +1405,7 @@ GM_addStyle(`
 
         // 2. Setup columns
         if (!setupTableColumns()) {
+            await loadSweetAlert();
             Swal.fire('Error', 'Could not find the orders table.', 'error');
             button.classList.remove('loading');
             hideProcessingOverlay();
@@ -1382,6 +1416,7 @@ GM_addStyle(`
         // 3. Scroll to load all rows
         const scrollableElement = document.querySelector('.infinite-scroll-component');
         if (!scrollableElement) {
+            await loadSweetAlert();
             Swal.fire('Error', 'Could not find the scrollable order list.', 'error');
             button.classList.remove('loading');
             hideProcessingOverlay();
@@ -1701,6 +1736,7 @@ GM_addStyle(`
         log(` Finished processing. ${window.processedOrderIds.size} of ${totalOrderCount} orders processed.`);
 
         if (window.processedOrderIds.size < totalOrderCount) {
+            await loadSweetAlert();
             Swal.fire('Processing Warning', `Only processed ${window.processedOrderIds.size} of ${totalOrderCount} orders. Some orders may not have loaded.`, 'warning');
         }
 
@@ -2077,6 +2113,7 @@ GM_addStyle(`
             </div>
         `;
 
+        await loadSweetAlert();
         Swal.fire({
             title: 'Calculation Complete!',
             html: `
