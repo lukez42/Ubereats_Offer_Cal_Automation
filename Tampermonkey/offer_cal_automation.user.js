@@ -9,6 +9,8 @@
 // @downloadURL  https://raw.githubusercontent.com/lukez42/Ubereats_Offer_Cal_Automation/main/Tampermonkey/offer_cal_automation.user.js
 // @grant        GM_addStyle
 // @grant        window.fetch
+// @grant        GM_xmlhttpRequest
+// @connect      pdcpyuyzerrgixhjnspe.supabase.co
 // ==/UserScript==
 
 /* --- This is the CSS that styles the new button and offer text --- */
@@ -295,20 +297,122 @@ GM_addStyle(`
 (function () {
     'use strict';
 
-    // Helper to dynamically load SweetAlert2 only when needed
-    async function loadSweetAlert() {
-        if (window.Swal) return;
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/sweetalert2@11';
-            script.onload = resolve;
-            script.onerror = reject;
-            document.head.appendChild(script);
-        });
-    }
+    // Native modal system — replaces SweetAlert2 to avoid Uber Eats CSP blocking external scripts
+    async function loadSweetAlert() { /* no-op: using native modal */ }
+
+    const Swal = {
+        fire(options) {
+            // Support simple (title, text, icon) shorthand
+            if (typeof options === 'string') {
+                options = { title: arguments[0], html: arguments[1], icon: arguments[2] };
+            }
+
+            return new Promise((resolve) => {
+                // Remove any existing modal
+                const existing = document.getElementById('resai-native-modal');
+                if (existing) existing.remove();
+
+                const isPrompt = !!options.input;
+                const iconColor = options.icon === 'error' ? '#DE1135' : options.icon === 'warning' ? '#f0a500' : '#06C167';
+                const iconChar = options.icon === 'error' ? '✕' : options.icon === 'warning' ? '⚠' : '✓';
+
+                const overlay = document.createElement('div');
+                overlay.id = 'resai-native-modal';
+                overlay.style.cssText = `
+                    position:fixed;inset:0;z-index:2147483647;
+                    background:rgba(0,0,0,0.6);display:flex;
+                    align-items:flex-start;justify-content:center;
+                    padding:40px 20px;overflow-y:auto;
+                `;
+
+                const box = document.createElement('div');
+                box.style.cssText = `
+                    background:#fff;border-radius:16px;padding:28px 32px;
+                    max-width:${options.width || '520px'};width:100%;
+                    box-shadow:0 20px 60px rgba(0,0,0,0.3);font-family:sans-serif;
+                    position:relative;
+                `;
+
+                let inputHTML = '';
+                if (isPrompt) {
+                    inputHTML = `
+                        <div style="margin:12px 0 4px;font-size:13px;color:#555;">${options.inputLabel || ''}</div>
+                        <input id="resai-modal-input" type="text" placeholder="${options.inputPlaceholder || ''}"
+                            style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #ddd;
+                                   border-radius:8px;font-size:14px;margin-bottom:8px;"/>
+                    `;
+                }
+
+                box.innerHTML = `
+                    <div style="text-align:center;margin-bottom:16px;">
+                        <div style="width:52px;height:52px;border-radius:50%;background:${iconColor};
+                                    color:#fff;font-size:24px;font-weight:bold;display:inline-flex;
+                                    align-items:center;justify-content:center;margin-bottom:12px;">${iconChar}</div>
+                        <div style="font-size:20px;font-weight:700;color:#1a1a1a;margin-bottom:8px;">${options.title || ''}</div>
+                    </div>
+                    <div style="font-size:14px;color:#333;max-height:65vh;overflow-y:auto;">${options.html || options.text || ''}</div>
+                    ${inputHTML}
+                    <div style="display:flex;gap:10px;justify-content:center;margin-top:20px;">
+                        ${options.showCancelButton ? `<button id="resai-modal-cancel" style="padding:10px 24px;border:1px solid #ddd;background:#f5f5f5;border-radius:8px;cursor:pointer;font-size:14px;">Cancel</button>` : ''}
+                        <button id="resai-modal-confirm" style="padding:10px 28px;border:none;background:${iconColor};color:#fff;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;">${options.confirmButtonText || 'OK'}</button>
+                    </div>
+                `;
+
+                overlay.appendChild(box);
+                document.body.appendChild(overlay);
+
+                // Focus input if prompt
+                if (isPrompt) {
+                    setTimeout(() => document.getElementById('resai-modal-input')?.focus(), 50);
+                }
+
+                const close = (value) => {
+                    overlay.remove();
+                    resolve({ value, isConfirmed: value !== undefined && value !== false });
+                };
+
+                document.getElementById('resai-modal-confirm').onclick = () => {
+                    if (isPrompt) {
+                        const val = document.getElementById('resai-modal-input')?.value?.trim();
+                        close(val || undefined);
+                    } else {
+                        close(true);
+                    }
+                };
+
+                const cancelBtn = document.getElementById('resai-modal-cancel');
+                if (cancelBtn) cancelBtn.onclick = () => close(undefined);
+
+                // Allow Enter key to confirm
+                overlay.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') document.getElementById('resai-modal-confirm')?.click();
+                    if (e.key === 'Escape' && options.showCancelButton) close(undefined);
+                });
+            });
+        }
+    };
+    window.Swal = Swal;
 
     // *** CONFIGURATION ***
-    const DEBUG = false; // Set to true to enable verbose console logging
+    const DEBUG = true; // Set to true to enable verbose console logging
+
+    /**
+     * Normalizes a raw Uber Eats bundle item name into a stable DB key.
+     * Strips decorators that may change without notice:
+     *   - (N) numbered prefix  e.g. "(3) "
+     *   - ▪️  bullet separator
+     *   - ✔️  checkmark confirmation
+     * The semantic core — "{Main Dish} Meal with {Side}" — stays intact.
+     * If Uber Eats renames decorators in future, the DB key won't change.
+     */
+    function normalizeItemKey(rawName) {
+        return rawName
+            .replace(/^[\(（]\d+[\)）]\s*/, '')   // remove (N) or （N） prefix
+            .replace(/▪️/g, '')           // remove bullet
+            .replace(/✔️/g, '')           // remove checkmark
+            .replace(/\s+/g, ' ')         // collapse multiple spaces
+            .trim();
+    }
     const SHOW_DEBUG_COLUMNS = false; // Set to true to show debug columns (Offer, Issue, Items, Tofu#, Pork#, Beef#)
     const SHOW_PROCESSING_OVERLAY = true; // Set to false to disable green glow overlay during processing
 
@@ -682,15 +786,8 @@ GM_addStyle(`
 
     function getCleanBaseUrl() {
         const url = new URL(window.location.href);
-        const params = url.searchParams;
-        const restaurantUUID = params.get('restaurantUUID');
-        const dateRange = params.get('dateRange');
-        const start = params.get('start');
-        const end = params.get('end');
-
-        if (restaurantUUID && start && end) {
-            return `${url.origin}/manager/orders?restaurantUUID=${restaurantUUID}&dateRange=${dateRange || 'custom'}&start=${start}&end=${end}`;
-        }
+        // Only reset the pathname to prevent UUID stacking, but preserve all query parameters
+        // to prevent breaking Uber Eats pagination or API requests.
         return `${url.origin}/manager/orders${url.search}`;
     }
 
@@ -888,9 +985,9 @@ GM_addStyle(`
             const label = paragraph.textContent ? paragraph.textContent.trim() : "";
             if (!label) continue;
 
-            // Look for "Offers on items" (with or without VAT text)
-            if (/Offers on items/i.test(label)) {
-                log(` extractOfferDataFromDrawer: Found "Offers on items" in paragraph: "${label}"`);
+            // Look for "Offers on items" (with or without VAT text), Promotion, or Discount
+            if (/Offers on items|Promotion|Discount/i.test(label)) {
+                log(` extractOfferDataFromDrawer: Found offer label in paragraph: "${label}"`);
 
                 // The value is in a sibling element. Walk up to find the parent container
                 const parentBlock = paragraph.closest('div[data-baseweb="block"]');
@@ -1369,20 +1466,20 @@ GM_addStyle(`
             console.warn('[UberEats Script] Wake Lock not supported or failed:', err);
         }
 
-        // Clear data from any previous runs UNLESS we're resuming from recovery
-        const hasRecoveredData = window.processedOrderIds && window.processedOrderIds.size > 0;
-        if (hasRecoveredData) {
-            log(` Resuming with ${window.processedOrderIds.size} previously processed orders`);
-        } else {
-            window.orderOfferData = {};
-            window.orderIssueData = {};
-            window.orderItemsData = {};
-            window.orderDateData = {};
-            window.orderSubtotalData = {};
-            window.orderCancelledData = {};
-            window.orderItemsDetected = {};
-            window.processedOrderIds = new Set();
-        }
+        // Always reset all state at the start of a new run.
+        // Crash/page-reload recovery is handled separately above via isRecoveryMode() + sessionStorage.
+        // The previous check (window.processedOrderIds.size > 0) was a bug: it would treat
+        // leftover state from the last run as a "resume" signal, causing stale results when
+        // the user changes the date range and clicks Fetch again in the same session.
+        window.orderOfferData = {};
+        window.orderIssueData = {};
+        window.orderItemsData = {};
+        window.orderDateData = {};
+        window.orderSubtotalData = {};
+        window.orderCancelledData = {};
+        window.orderItemsDetected = {};
+        window.processedOrderIds = new Set();
+        log(' State reset — starting fresh run.');
         let totalOfferSum = 0;
         let totalSubtotalSum = 0;
         let ordersWithOffers = 0;
@@ -1517,7 +1614,7 @@ GM_addStyle(`
                 }
 
                 if (drawer) {
-                    log(` Order ${orderId}: Drawer opened & verified, extracting data...`);
+                    console.log(`[UberEats Script] ▶ Order ${orderId}: Drawer opened & verified, extracting data...`);
                     await waitForDrawerContent(drawer, 8000);
                     offer = extractOfferDataFromDrawer(drawer);
                     issue = extractIssueDataFromDrawer(drawer);
@@ -1530,12 +1627,16 @@ GM_addStyle(`
                     window.orderDateData[orderId] = date;
 
                     if (cancelled) {
-                        log(` Order ${orderId}: ⚠️ CANCELLED ORDER DETECTED`);
+                        console.warn(`[UberEats Script] ⚠️ Order ${orderId}: CANCELLED ORDER DETECTED`);
                     }
 
-                    log(` Order ${orderId}: offer="${offer.text}", subtotal="${subtotal.text}", items=${items.length}, date="${date}", cancelled=${cancelled}`);
+                    // ALWAYS log extraction results (not gated by DEBUG)
+                    console.log(`[UberEats Script] ✅ Order ${orderId}: offer="${offer.text}" (£${offer.value}), subtotal="${subtotal.text}" (£${subtotal.value}), items=${items.length}, date="${date}", cancelled=${cancelled}`);
+                    if (items.length > 0) {
+                        console.log(`[UberEats Script]    Items: ${items.map(i => `${i.name} x${i.quantity} @ ${i.price}`).join(' | ')}`);
+                    }
                 } else {
-                    log(` Order ${orderId}: Drawer timeout or validation failed`);
+                    console.warn(`[UberEats Script] ❌ Order ${orderId}: Drawer timeout or validation failed`);
                     issue = "Drawer Error";
                     window.orderCancelledData[orderId] = false;
                 }
@@ -1569,17 +1670,20 @@ GM_addStyle(`
 
                     const itemsDetectedCell = row.querySelector('.td-items-detected');
                     if (itemsDetectedCell) {
-                        const items = window.orderItemsData[orderId] || [];
-                        const bogoMealPattern = /^\(\d+\)/;
-                        const bogoItems = items.filter(item => bogoMealPattern.test(item.name));
+                        const allItems = window.orderItemsData[orderId] || [];
+                        const bogoItemsForCount = allItems.filter(item => 
+                            /\bMeal\b/i.test(item.name) && 
+                            (/\bwith\b/i.test(item.name) || /&|\+/.test(item.name) || /▪️/.test(item.name))
+                        );
 
-                        if (bogoItems.length > 0 && offer.value !== 0) {
-                            const shortNames = bogoItems.map(item => {
+                        if (bogoItemsForCount.length > 0 && offer.value !== 0) {
+                            const shortNames = bogoItemsForCount.map(item => {
                                 let shortName = 'Other';
                                 if (item.name.includes('Beef')) shortName = 'Beef';
                                 else if (item.name.includes('Tofu')) shortName = 'Tofu';
                                 else if (item.name.includes('Pork')) shortName = 'Pork';
-                                return `${shortName}×${item.quantity}`;
+                                const actualSold = Math.ceil(item.quantity / 2);
+                                return `${shortName}×${actualSold}`;
                             }).join(', ');
                             itemsDetectedCell.textContent = shortNames;
                             itemsDetectedCell.className = '_c1 _di _fh _f0 _e5 _ea _e6 _e9 _c0 _ni _ng _kc _nh td-offer-value td-items-detected';
@@ -1592,8 +1696,10 @@ GM_addStyle(`
 
                     // Calculate item counts for this order and update running totals
                     const allItems = window.orderItemsData[orderId] || [];
-                    const bogoPattern = /^\(\d+\)/;
-                    const bogoItemsForCount = allItems.filter(item => bogoPattern.test(item.name));
+                    const bogoItemsForCount = allItems.filter(item => 
+                        /\bMeal\b/i.test(item.name) && 
+                        (/\bwith\b/i.test(item.name) || /&|\+/.test(item.name) || /▪️/.test(item.name))
+                    );
 
                     let orderTofuCount = 0;
                     let orderPorkCount = 0;
@@ -1602,12 +1708,13 @@ GM_addStyle(`
                     // Only count if there's an offer (BOGO items)
                     if (offer.value !== 0 && bogoItemsForCount.length > 0) {
                         bogoItemsForCount.forEach(item => {
+                            const actualSold = Math.ceil(item.quantity / 2);
                             if (item.name.includes('Tofu')) {
-                                orderTofuCount += item.quantity;
+                                orderTofuCount += actualSold;
                             } else if (item.name.includes('Pork')) {
-                                orderPorkCount += item.quantity;
+                                orderPorkCount += actualSold;
                             } else if (item.name.includes('Beef')) {
-                                orderBeefCount += item.quantity;
+                                orderBeefCount += actualSold;
                             }
                         });
 
@@ -1679,7 +1786,12 @@ GM_addStyle(`
                     closeButton.click();
                 }
                 await waitForElementToDisappear('button[aria-label="Close"]', 3000);
-                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Add a random delay between 0.5s and 1s to avoid rate limiting (403 Forbidden)
+                // Natural drawer open/close already adds ~3-4s per order
+                const delayMs = Math.floor(Math.random() * 500) + 500;
+                log(` Order ${orderId}: Waiting ${delayMs}ms before next order to avoid rate limits...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
 
                 // Clean up URL to prevent UUID accumulation
                 await cleanupAfterOrder();
@@ -1698,7 +1810,7 @@ GM_addStyle(`
 
             // 4. If not done and no visible unprocessed rows, scroll to load more
             if (window.processedOrderIds.size < totalOrderCount) {
-                // Update status to indicate loading
+                // Scroll down to trigger loading
                 const currentCount = window.processedOrderIds.size;
                 const loadingText = `Loading more orders<span class="animated-dots"></span> (${currentCount}/${totalOrderCount})`;
 
@@ -1709,27 +1821,69 @@ GM_addStyle(`
                     updateButtonProgress(currentCount, totalOrderCount, loadingText);
                 }
 
-                // Scroll down to trigger loading
-                scrollableElement.scrollTop = scrollableElement.scrollHeight;
-                scrollableElement.scrollTo(0, scrollableElement.scrollHeight);
+                // 1. Aggressively scroll all potential containers
+                const containersToScroll = [
+                    scrollableElement,
+                    document.documentElement,
+                    document.body,
+                    document.querySelector('div[data-baseweb="flex-grid"]'),
+                    ...document.querySelectorAll('div[style*="overflow"]') // any element with overflow
+                ].filter(Boolean);
+
+                containersToScroll.forEach(container => {
+                    try {
+                        container.scrollTop = container.scrollHeight;
+                        if (typeof container.scrollTo === 'function') {
+                            container.scrollTo(0, container.scrollHeight);
+                        }
+                        container.dispatchEvent(new WheelEvent('wheel', { deltaY: 500, bubbles: true, cancelable: true }));
+                    } catch (e) {}
+                });
+
+                // 2. Also scroll the window
+                window.scrollTo(0, document.body.scrollHeight);
+                window.dispatchEvent(new WheelEvent('wheel', { deltaY: 500, bubbles: true, cancelable: true }));
+
+                // 3. Scroll the last visible row into view
                 const currentVisibleRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
                 const lastRow = currentVisibleRows[currentVisibleRows.length - 1];
                 if (lastRow) {
-                    lastRow.scrollIntoView({ block: 'end', behavior: 'auto' });
+                    lastRow.scrollIntoView({ block: 'end', behavior: 'smooth' });
                 }
-                scrollableElement.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
 
-                // Wait for loading indicator
-                await new Promise(resolve => setTimeout(resolve, 500));
-                const loadingIndicator = scrollableElement.querySelector('[role="progressbar"], .loading, i[role="progressbar"]');
-                if (loadingIndicator) {
-                    let waitCount = 0;
-                    while (scrollableElement.querySelector('[role="progressbar"], .loading, i[role="progressbar"]') && waitCount < 20) {
-                        await new Promise(resolve => setTimeout(resolve, 200));
-                        waitCount++;
+                // 4. Send arrow down key events just in case
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageDown', bubbles: true }));
+
+                // Wait for loading indicator or new rows
+                let waitCount = 0;
+                let newRowsLoaded = false;
+                
+                while (waitCount < 25) { // Max 5 seconds wait per scroll attempt
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    waitCount++;
+                    
+                    const newRowCount = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]').length;
+                    if (newRowCount > currentVisibleRows.length) {
+                        log(` Scroll successful: loaded ${newRowCount - currentVisibleRows.length} new rows!`);
+                        newRowsLoaded = true;
+                        break;
+                    }
+                    
+                    // If still stuck after 2.5s, try scrolling again
+                    if (waitCount === 12 && lastRow) {
+                        lastRow.scrollIntoView({ block: 'start', behavior: 'auto' });
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        lastRow.scrollIntoView({ block: 'end', behavior: 'auto' });
                     }
                 }
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                if (!newRowsLoaded) {
+                    log(` Scroll attempt ${stuckCount} finished, no new rows detected yet.`);
+                }
+                
+                // Add an extra small delay before the next iteration
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
         }
 
@@ -1880,156 +2034,78 @@ GM_addStyle(`
                         logDebug(`  [${idx}] "${item.name}" - Price: £${item.priceValue}, Qty: ${item.quantity}, Total: £${(item.priceValue * item.quantity).toFixed(2)}`);
                     });
 
-                    const offerAbs = Math.abs(offer.value);
-
-                    // STEP 0: Detect and combine split-line items (same item appearing multiple times with qty=1)
-                    // This handles cases where Uber Eats displays a BOGO pair as separate line items
+                    // STEP 1: Consolidate split-line items (same item appearing multiple times with qty=1)
+                    // Uber Eats sometimes shows the same item on separate rows instead of a single row with qty=N
                     const itemCountByName = {};
                     items.forEach(item => {
                         if (!itemCountByName[item.name]) {
-                            itemCountByName[item.name] = { totalQty: 0, totalPrice: 0, count: 0 };
+                            itemCountByName[item.name] = { totalQty: 0, unitPrice: 0, count: 0 };
                         }
                         itemCountByName[item.name].totalQty += item.quantity;
-                        itemCountByName[item.name].totalPrice += item.priceValue;
+                        // Capture unit price from the first occurrence
+                        if (itemCountByName[item.name].count === 0) {
+                            itemCountByName[item.name].unitPrice = item.priceValue;
+                        }
                         itemCountByName[item.name].count++;
                     });
 
-                    // Create consolidated items list for BOGO detection
-                    const consolidatedItems = [];
-                    for (const [name, data] of Object.entries(itemCountByName)) {
-                        consolidatedItems.push({
-                            name: name,
-                            quantity: data.totalQty,
-                            priceValue: data.totalPrice, // Combined price for all instances
-                            isSplitLine: data.count > 1 // Flag to track if this was consolidated
-                        });
-                    }
+                    const consolidatedItems = Object.entries(itemCountByName).map(([name, data]) => ({
+                        name,
+                        quantity: data.totalQty,
+                        unitPrice: data.unitPrice,
+                        isSplitLine: data.count > 1
+                    }));
 
-                    // Log if we detected split-line items
-                    const splitLineItems = consolidatedItems.filter(item => item.isSplitLine);
+                    // Log consolidated items
+                    const splitLineItems = consolidatedItems.filter(i => i.isSplitLine);
                     if (splitLineItems.length > 0) {
                         logDebug(` Split-line items detected and consolidated:`);
                         splitLineItems.forEach(item => {
-                            logDebug(`  - "${item.name}": Combined qty=${item.quantity}, Combined price=£${item.priceValue.toFixed(2)}`);
+                            logDebug(`  - "${item.name}": Combined qty=${item.quantity}, Unit price=£${item.unitPrice.toFixed(2)}`);
                         });
                     }
 
-                    // STEP 0.5: Filter to ONLY include BOGO meal combos
-                    // BOGO items start with a number in parentheses: "(1)", "(2)", "(3)", etc.
-                    // Other items like "Stewed Beef Rice Meal" or "Pork Saozi Noodle Hotpot" are NOT BOGO items
-                    const bogoMealPattern = /^\(\d+\)/; // Matches "(1)", "(2)", "(3)", etc. at the start
-                    const bogoEligibleItems = consolidatedItems.filter(item => bogoMealPattern.test(item.name));
+                    // Pattern: contains word "Meal" + contains "with" (or & / + / ▪️)
+                    // e.g. "Beef Noodle Hotpot Meal with Fried Chicken Strips"
+                    const mealDealItems = consolidatedItems.filter(item =>
+                        /\bMeal\b/i.test(item.name) &&
+                        (/\bwith\b/i.test(item.name) || /&|\+/.test(item.name) || /▪️/.test(item.name))
+                    );
+                    const nonMealDealItems = consolidatedItems.filter(item => !mealDealItems.includes(item));
 
-                    const nonBogoItems = consolidatedItems.filter(item => !bogoMealPattern.test(item.name));
-                    if (nonBogoItems.length > 0) {
-                        logDebug(` Non-BOGO items excluded from counting:`);
-                        nonBogoItems.forEach(item => {
-                            logDebug(`  - "${item.name}" (no meal combo prefix, skipping)`);
-                        });
+                    if (nonMealDealItems.length > 0) {
+                        logDebug(` Non-bundle items excluded from items_summary:`);
+                        nonMealDealItems.forEach(item => logDebug(`  - "${item.name}" (qty: ${item.quantity})`));
                     }
-
-                    // STEP 1: Find all items that could be BOGO candidates (qty >= 2) from BOGO-ELIGIBLE items only
-                    const bogoCandidates = bogoEligibleItems.filter(item => item.quantity >= 2);
-                    logDebug(` BOGO candidates (qty >= 2): ${bogoCandidates.length} items`);
-
-                    // STEP 2: Check for MULTI-BOGO scenario
-                    // Calculate sum of expected BOGO discounts for ALL candidates
-                    let totalExpectedDiscount = 0;
-                    bogoCandidates.forEach(item => {
-                        // BOGO discount is 50% of the unit price (base price ~£18.50 or ~£19.50)
-                        const basePrice = item.priceValue / 2; // Price per item in the pair
-                        totalExpectedDiscount += basePrice;
-                    });
-
-                    const multiBogoMatch = bogoCandidates.length >= 2 && Math.abs(offerAbs - totalExpectedDiscount) < 2.0;
-
-                    logDebug(` Multi-BOGO Check:`);
-                    logDebug(`  - Total expected discount (sum of 50% of each): £${totalExpectedDiscount.toFixed(2)}`);
-                    logDebug(`  - Offer value: £${offerAbs.toFixed(2)}`);
-                    logDebug(`  - Difference: £${Math.abs(offerAbs - totalExpectedDiscount).toFixed(2)}`);
-                    logDebug(`  - Is Multi-BOGO: ${multiBogoMatch}`);
-
-                    if (multiBogoMatch) {
-                        // MULTI-BOGO: Count each BOGO candidate with HALVED quantity (BOGO pairs, not total items)
-                        logDebug(` ✓ MULTI-BOGO DETECTED! Processing ${bogoCandidates.length} items at HALVED quantity:`);
-                        let orderItemsDesc = [];
-                        bogoCandidates.forEach(item => {
-                            const quantityToAdd = Math.floor(item.quantity / 2); // HALVED quantity for BOGO pairs
-                            const itemKey = item.name;
-                            if (!summaryByDate[date].itemCounts[itemKey]) {
-                                summaryByDate[date].itemCounts[itemKey] = 0;
-                            }
-                            const previousCount = summaryByDate[date].itemCounts[itemKey];
-                            summaryByDate[date].itemCounts[itemKey] += quantityToAdd;
-                            summaryByDate[date].totalDiscountedItems += quantityToAdd;
-                            logDebug(`  - "${itemKey}": ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
-                            // Extract short item type (Beef/Tofu/Pork) from name
-                            let shortName = 'Other';
-                            if (itemKey.includes('Beef')) shortName = 'Beef';
-                            else if (itemKey.includes('Tofu')) shortName = 'Tofu';
-                            else if (itemKey.includes('Pork')) shortName = 'Pork';
-                            orderItemsDesc.push(`${shortName}×${quantityToAdd}`);
-                        });
-                        // Track order details
-                        summaryByDate[date].orderDetails.push({
-                            id: orderId,
-                            items: orderItemsDesc.join('+'),
-                            offer: offer.value
-                        });
+                    if (mealDealItems.length > 0) {
+                        logDebug(` Meal deal bundles matched:`);
+                        mealDealItems.forEach(item => logDebug(`  ✓ "${item.name}" (qty: ${item.quantity})`));
                     } else {
-                        // SINGLE-ITEM BOGO: Use bogoEligibleItems (only meal combos with (1)/(2)/(3) prefix)
-                        if (bogoEligibleItems.length === 0) {
-                            logDebug(` No BOGO-eligible items found (no items with meal combo prefix)`);
-                            logDebug(`========== END ORDER ${orderId} ==========\n`);
-                            continue;
-                        }
-                        const sortedItems = [...bogoEligibleItems].sort((a, b) => b.priceValue - a.priceValue);
-                        const highestPricedItem = sortedItems[0];
+                        logDebug(` No meal deal bundles found in this order (offer may be a percentage discount)`);
+                    }
 
-                        logDebug(` Single-item BOGO check for: "${highestPricedItem.name}"`);
-
-                        const unitPrice = highestPricedItem.priceValue;
-                        const expectedBogoDiscount = unitPrice / 2;
-                        const diff = Math.abs(offerAbs - expectedBogoDiscount);
-
-                        const qtyCheck = highestPricedItem.quantity >= 2;
-                        const diffCheck = diff < 2.0;
-                        const isBogo = qtyCheck && diffCheck;
-
-                        logDebug(` BOGO Calculation Details:`);
-                        logDebug(`  - Offer value: £${offer.value} (Absolute: £${offerAbs.toFixed(2)})`);
-                        logDebug(`  - Unit price of item: £${unitPrice.toFixed(2)}`);
-                        logDebug(`  - Expected BOGO discount (50% of unit): £${expectedBogoDiscount.toFixed(2)}`);
-                        logDebug(`  - Difference: |${offerAbs.toFixed(2)} - ${expectedBogoDiscount.toFixed(2)}| = ${diff.toFixed(4)}`);
-                        logDebug(`  - Quantity check (qty >= 2): ${highestPricedItem.quantity} >= 2 = ${qtyCheck}`);
-                        logDebug(`  - Difference check (diff < 2.0): ${diff.toFixed(4)} < 2.0 = ${diffCheck}`);
-                        logDebug(`  - FINAL BOGO RESULT: ${isBogo}`);
-
-                        // Always use HALVED quantity - we count BOGO pairs, not total items made
-                        const quantityToAdd = Math.floor(highestPricedItem.quantity / 2);
-                        logDebug(` Using HALVED quantity: ${quantityToAdd} (BOGO pairs)`);
-
-                        const itemKey = highestPricedItem.name;
+                    let orderItemsDesc = [];
+                    mealDealItems.forEach(item => {
+                        // Normalize: strip (N), ▪️, ✔️ so DB key is stable even if Uber Eats changes decorators
+                        const itemKey = normalizeItemKey(item.name);
+                        logDebug(`  KEY: "${item.name}" → "${itemKey}"`);
                         if (!summaryByDate[date].itemCounts[itemKey]) {
                             summaryByDate[date].itemCounts[itemKey] = 0;
                         }
-                        const previousCount = summaryByDate[date].itemCounts[itemKey];
-                        summaryByDate[date].itemCounts[itemKey] += quantityToAdd;
-                        summaryByDate[date].totalDiscountedItems += quantityToAdd;
+                        const prev = summaryByDate[date].itemCounts[itemKey];
+                        const actualSold = Math.ceil(item.quantity / 2);
+                        summaryByDate[date].itemCounts[itemKey] += actualSold;
+                        summaryByDate[date].totalDiscountedItems += actualSold;
+                        logDebug(`  AGGREGATION: "${itemKey}" ${prev} + ${actualSold} = ${summaryByDate[date].itemCounts[itemKey]}`);
+                        orderItemsDesc.push(`${itemKey}×${actualSold}`);
+                    });
 
-                        logDebug(` AGGREGATION: "${itemKey}" ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
-
-                        // Track order details for debugging
-                        let shortName = 'Other';
-                        if (itemKey.includes('Beef')) shortName = 'Beef';
-                        else if (itemKey.includes('Tofu')) shortName = 'Tofu';
-                        else if (itemKey.includes('Pork')) shortName = 'Pork';
-                        summaryByDate[date].orderDetails.push({
-                            id: orderId,
-                            items: `${shortName}×${quantityToAdd}`,
-                            offer: offer.value
-                        });
-                    }
+                    // Track per-order breakdown for debugging
+                    summaryByDate[date].orderDetails.push({
+                        id: orderId,
+                        items: orderItemsDesc.join(', '),
+                        offer: offer.value
+                    });
 
                     logDebug(`========== END ORDER ${orderId} ==========\n`);
                 } else {
@@ -2114,6 +2190,68 @@ GM_addStyle(`
         `;
 
         await loadSweetAlert();
+        
+        // Push data to Supabase
+        const RESAI_SUPABASE_URL = "https://pdcpyuyzerrgixhjnspe.supabase.co/functions/v1/sync-uber-eats";
+        const RESAI_SYNC_SECRET = "RES_AI_UBER_EATS_SYNC_KEY_2026";
+        
+        // Hard-coded org ID for Chilli Daddy
+        const orgId = '4b951be2-a0ff-4a91-86fe-14e4be14102b';
+
+        let syncStatusHTML = '';
+        if (orgId) {
+            try {
+                // Prepare records
+                const records = sortedDates.map(date => ({
+                    org_id: orgId,
+                    date: date,
+                    items_summary: summaryByDate[date].itemCounts,
+                    total_orders: summaryByDate[date].totalOrders,
+                    orders_with_offers: summaryByDate[date].ordersWithOffers,
+                    total_offer_sum: summaryByDate[date].totalOfferSum,
+                    total_subtotal_sum: summaryByDate[date].totalSubtotalSum
+                }));
+                
+                // ALWAYS log sync payload for debugging
+                console.log(`[UberEats Script] 📤 SYNC: Preparing ${records.length} records for org ${orgId}`);
+                records.forEach((r, i) => {
+                    console.log(`[UberEats Script]   Record ${i+1}: date=${r.date}, orders=${r.total_orders}, withOffers=${r.orders_with_offers}, offerSum=£${r.total_offer_sum?.toFixed(2)}, subtotalSum=£${r.total_subtotal_sum?.toFixed(2)}, items=${JSON.stringify(r.items_summary)}`);
+                });
+                
+                const response = await new Promise((resolve, reject) => {
+                    GM_xmlhttpRequest({
+                        method: 'POST',
+                        url: RESAI_SUPABASE_URL,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-uber-eats-secret': RESAI_SYNC_SECRET
+                        },
+                        data: JSON.stringify({ records }),
+                        onload: function(res) {
+                            resolve({
+                                ok: res.status >= 200 && res.status < 300,
+                                text: () => Promise.resolve(res.responseText)
+                            });
+                        },
+                        onerror: function(err) {
+                            reject(err);
+                        }
+                    });
+                });
+                
+                if (response.ok) {
+                    syncStatusHTML = '<div style="margin-top: 10px; padding: 10px; background: #e8f5e9; color: #2e7d32; border-radius: 8px;">✓ Successfully synced to ResAI</div>';
+                } else {
+                    const errorMsg = await response.text();
+                    console.error('[UberEats Script] Sync failed:', errorMsg);
+                    syncStatusHTML = '<div style="margin-top: 10px; padding: 10px; background: #ffebee; color: #c62828; border-radius: 8px;">❌ Failed to sync to ResAI</div>';
+                }
+            } catch (err) {
+                console.error('[UberEats Script] Sync error:', err);
+                syncStatusHTML = '<div style="margin-top: 10px; padding: 10px; background: #ffebee; color: #c62828; border-radius: 8px;">❌ Error syncing to ResAI</div>';
+            }
+        }
+
         Swal.fire({
             title: 'Calculation Complete!',
             html: `
@@ -2125,6 +2263,7 @@ GM_addStyle(`
                     <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">${finalTotalDiscountedItems} discounted items · ${finalProcessedCount}/${totalOrderCount} orders</p>
                 </div>
                 ${tableHTML}
+                ${syncStatusHTML}
             `,
             icon: 'success',
             width: '800px',
