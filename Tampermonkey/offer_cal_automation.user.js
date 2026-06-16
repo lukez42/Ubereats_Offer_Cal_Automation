@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.7
+// @version      9.8
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -394,7 +394,7 @@ GM_addStyle(`
     window.Swal = Swal;
 
     // *** CONFIGURATION ***
-    const DEBUG = true; // Set to true to enable verbose console logging
+    const DEBUG = false; // Set to true to enable verbose console logging
 
     /**
      * Normalizes a raw Uber Eats bundle item name into a stable DB key.
@@ -2066,11 +2066,12 @@ GM_addStyle(`
                     row.style.contentVisibility = 'hidden';
                 }
 
-                // Save state to IndexedDB after every order to prevent any data loss
-                if (window.processedOrderIds.size > 0) {
-                    logDebug(` Processed ${window.processedOrderIds.size} orders. Saving state to IndexedDB...`);
-                    await saveStateToIndexedDB();
-                }
+            }
+            
+            // Batch save state to IndexedDB after processing the batch of rows to prevent disk I/O bottlenecks
+            if (processedThisRound > 0 && window.processedOrderIds.size > 0) {
+                logDebug(` Processed ${processedThisRound} orders this round. Saving state to IndexedDB...`);
+                await saveStateToIndexedDB();
             }
 
             // 3. Check if we made progress
