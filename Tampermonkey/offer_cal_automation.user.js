@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.10
+// @version      9.11
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -415,6 +415,14 @@ GM_addStyle(`
     }
     const SHOW_DEBUG_COLUMNS = false; // Set to true to show debug columns (Offer, Issue, Items, Tofu#, Pork#, Beef#)
     const SHOW_PROCESSING_OVERLAY = true; // Set to false to disable green glow overlay during processing
+
+    // Compiled Regular Expressions for High Performance
+    const DATE_PATTERNS = [
+        /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/i, // "Nov 13, 2025"
+        /\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}\b/i,   // "13 Nov 2025"
+        /\b\d{1,2}\/\d{1,2}\/\d{4}\b/,  // "13/11/2025"
+        /\b\d{4}-\d{2}-\d{2}\b/         // "2025-11-13"
+    ];
 
     // Helper function for debug logging - only outputs when DEBUG is true
     function log(...args) {
@@ -1426,14 +1434,6 @@ GM_addStyle(`
             return getDateFromURLFallback();
         }
 
-        // Date patterns to match
-        const datePatterns = [
-            /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/i, // "Nov 13, 2025"
-            /\b\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}\b/i,   // "13 Nov 2025"
-            /\b\d{1,2}\/\d{1,2}\/\d{4}\b/,  // "13/11/2025"
-            /\b\d{4}-\d{2}-\d{2}\b/         // "2025-11-13"
-        ];
-
         // Strategy 1: Look for date near the Order ID element in the drawer
         const orderIdElement = drawer.querySelector('[class*="_fk"][class*="_nu"]');
         if (orderIdElement) {
@@ -1442,7 +1442,7 @@ GM_addStyle(`
                 const siblingDivs = parent.querySelectorAll('[data-baseweb="block"] [class*="_c1"]');
                 for (const el of siblingDivs) {
                     const text = el.textContent.trim();
-                    for (const pattern of datePatterns) {
+                    for (const pattern of DATE_PATTERNS) {
                         const match = text.match(pattern);
                         if (match) {
                             logDebug(` Date found via Strategy 1 (near Order ID): "${match[0]}"`);
@@ -1457,7 +1457,7 @@ GM_addStyle(`
         const allBlocks = drawer.querySelectorAll('div[data-baseweb="block"] p, div[data-baseweb="block"] div[class*="_c1"], div[data-baseweb="block"] span');
         for (const el of allBlocks) {
             const text = el.textContent.trim();
-            for (const pattern of datePatterns) {
+            for (const pattern of DATE_PATTERNS) {
                 const match = text.match(pattern);
                 if (match) {
                     logDebug(` Date found via Strategy 2 (broad search): "${match[0]}"`);
@@ -1467,8 +1467,8 @@ GM_addStyle(`
         }
 
         // Strategy 3: Search entire drawer innerHTML for date pattern
-        const drawerText = drawer.innerText || drawer.textContent || "";
-        for (const pattern of datePatterns) {
+        const drawerText = drawer.textContent || "";
+        for (const pattern of DATE_PATTERNS) {
             const match = drawerText.match(pattern);
             if (match) {
                 logDebug(` Date found via Strategy 3 (full text scan): "${match[0]}"`);
@@ -1812,18 +1812,18 @@ GM_addStyle(`
                 const fulfilmentCell = row.querySelector('td:nth-child(6)');
                 const courierCell = row.querySelector('td:nth-child(7)');
 
-                if (shopCell) window.orderShopData[orderId] = shopCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
-                if (dateCell) window.orderDateData[orderId] = dateCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
-                if (timeCell) window.orderTimeData[orderId] = timeCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
-                if (customerCell) window.orderCustomerData[orderId] = customerCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
-                if (fulfilmentCell) window.orderFulfilmentData[orderId] = fulfilmentCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
-                if (courierCell) window.orderCourierData[orderId] = courierCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                if (shopCell) window.orderShopData[orderId] = shopCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
+                if (dateCell) window.orderDateData[orderId] = dateCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
+                if (timeCell) window.orderTimeData[orderId] = timeCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
+                if (customerCell) window.orderCustomerData[orderId] = customerCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
+                if (fulfilmentCell) window.orderFulfilmentData[orderId] = fulfilmentCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
+                if (courierCell) window.orderCourierData[orderId] = courierCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
 
                 // Extract Issue from row (8th column)
                 const issueCell = row.querySelector('td:nth-child(8)');
                 let rowIssue = "—";
                 if (issueCell) {
-                    rowIssue = issueCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                    rowIssue = issueCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
                     if (!rowIssue) rowIssue = "—";
                 }
                 window.orderIssueData[orderId] = rowIssue;
@@ -1832,7 +1832,7 @@ GM_addStyle(`
                 const rowSubtotalCell = row.lastElementChild;
                 let subtotal = { text: "—", value: 0 };
                 if (rowSubtotalCell) {
-                    const rawText = rowSubtotalCell.innerText.trim();
+                    const rawText = rowSubtotalCell.textContent.trim();
                     const numericValue = parseFloat(rawText.replace(/[^0-9.]/g, '')) || 0;
                     if (numericValue > 0) {
                         subtotal = { text: rawText, value: numericValue };
@@ -1887,7 +1887,7 @@ GM_addStyle(`
                         if (!date || date === "Unknown Date") {
                             const dateCell = row.querySelector('td:nth-child(3)');
                             if (dateCell) {
-                                date = dateCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                                date = dateCell.textContent.trim().replace(/[\u00A0\n\s]+/g, ' ');
                                 logDebug(` Order ${orderId}: Drawer date missing, fell back to row date "${date}"`);
                             }
                         }
