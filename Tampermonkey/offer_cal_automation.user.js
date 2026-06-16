@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.8
+// @version      9.9
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -2717,7 +2717,21 @@ GM_addStyle(`
         // Use Blob with UTF-8 BOM (\uFEFF) so Excel correctly handles emojis and non-breaking spaces
         const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
         const csvUrl = URL.createObjectURL(blob);
-        const downloadLinkHTML = `<div style="margin-top: 15px; text-align: center;"><a href="${csvUrl}" download="ubereats_market_basket_orders.csv" style="padding: 12px 24px; background: #000; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">📥 Download Full Order CSV</a></div>`;
+        
+        let fileName = "ubereats_market_basket_orders.csv";
+        const dateKeys = Object.keys(summaryByDate).filter(d => d && d !== "Unknown Date" && d !== "Fallback Date Required");
+        if (dateKeys.length > 0) {
+            const sortedByDate = dateKeys.sort((a, b) => new Date(a) - new Date(b));
+            const minDateStr = sortedByDate[0].replace(/,/g, '').replace(/ /g, '_');
+            const maxDateStr = sortedByDate[sortedByDate.length - 1].replace(/,/g, '').replace(/ /g, '_');
+            if (minDateStr === maxDateStr) {
+                fileName = `ubereats_market_basket_orders_${minDateStr}.csv`;
+            } else {
+                fileName = `ubereats_market_basket_orders_${minDateStr}_to_${maxDateStr}.csv`;
+            }
+        }
+
+        const downloadLinkHTML = `<div style="margin-top: 15px; text-align: center;"><a href="${csvUrl}" download="${fileName}" style="padding: 12px 24px; background: #000; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">📥 Download Full Order CSV</a></div>`;
 
         Swal.fire({
             title: 'Calculation Complete!',
