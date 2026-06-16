@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.1
-// @description  This script patiently scrolls to load all orders, then processes them one-by-one, waiting for the GraphQL data for each before continuing.
-// @author       Gemini Assistant
+// @version      9.3
+// @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
+// @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
 // @updateURL    https://raw.githubusercontent.com/lukez42/Ubereats_Offer_Cal_Automation/main/Tampermonkey/offer_cal_automation.user.js
 // @downloadURL  https://raw.githubusercontent.com/lukez42/Ubereats_Offer_Cal_Automation/main/Tampermonkey/offer_cal_automation.user.js
@@ -439,6 +439,11 @@ GM_addStyle(`
     window.orderIssueData = {};
     window.orderItemsData = {}; // Store items data for each order
     window.orderDateData = {}; // Store date for each order
+    window.orderShopData = {}; // Store shop details
+    window.orderTimeData = {}; // Store time
+    window.orderCustomerData = {}; // Store customer name
+    window.orderFulfilmentData = {}; // Store fulfilment type
+    window.orderCourierData = {}; // Store courier name
     window.processedOrderIds = new Set(); // Keep track of processed orders
 
     // Detect if running on mobile device (for Kiwi Browser on Android)
@@ -565,56 +570,102 @@ GM_addStyle(`
             resetButtonProgress();
         }
     }
+    // *** INDEXEDDB RECOVERY FUNCTIONS ***
+    const DB_NAME = 'UberEatsScraperDB';
+    const STORE_NAME = 'recoveryState';
 
-    // *** SESSION STORAGE RECOVERY FUNCTIONS ***
-    function saveStateToSession() {
+    function initIndexedDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME);
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = (e) => reject(e);
+        });
+    }
+
+    async function saveStateToIndexedDB() {
         try {
             const state = {
                 processedOrderIds: Array.from(window.processedOrderIds),
                 orderOfferData: window.orderOfferData || {},
                 orderSubtotalData: window.orderSubtotalData || {},
+                orderFinancialsData: window.orderFinancialsData || {},
                 orderItemsData: window.orderItemsData || {},
                 orderDateData: window.orderDateData || {},
+                orderShopData: window.orderShopData || {},
+                orderTimeData: window.orderTimeData || {},
+                orderCustomerData: window.orderCustomerData || {},
+                orderFulfilmentData: window.orderFulfilmentData || {},
+                orderCourierData: window.orderCourierData || {},
                 orderCancelledData: window.orderCancelledData || {},
                 timestamp: Date.now()
             };
-            sessionStorage.setItem('ubereats_recovery_state', JSON.stringify(state));
-            log(` Saved recovery state: ${state.processedOrderIds.length} orders processed`);
+            
+            const db = await initIndexedDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                store.put(state, 'currentState');
+                tx.oncomplete = () => {
+                    log(` Saved recovery state to IndexedDB: ${state.processedOrderIds.length} orders processed`);
+                    console.log('%c[DB] Successfully saved recovery state to IndexedDB!', 'background: #06C167; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;', `${state.processedOrderIds.length} orders processed`);
+                    resolve();
+                };
+                tx.onerror = (e) => reject(e);
+            });
         } catch (e) {
-            console.warn('[UberEats Script] Failed to save recovery state:', e);
+            console.warn('[UberEats Script] Failed to save recovery state to IndexedDB:', e);
         }
     }
 
-    function loadStateFromSession() {
+    async function loadStateFromIndexedDB() {
         try {
-            const stateJson = sessionStorage.getItem('ubereats_recovery_state');
-            if (!stateJson) return null;
+            const db = await initIndexedDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const request = store.get('currentState');
+                
+                request.onsuccess = () => {
+                    const state = request.result;
+                    if (!state) return resolve(null);
 
-            const state = JSON.parse(stateJson);
-
-            // Only use recovery state if it's less than 5 minutes old
-            const ageMinutes = (Date.now() - state.timestamp) / 1000 / 60;
-            if (ageMinutes > 5) {
-                log(' Recovery state is too old, discarding');
-                clearRecoveryState();
-                return null;
-            }
-
-            return state;
+                    // Only use recovery state if it's less than 60 minutes old
+                    const ageMinutes = (Date.now() - state.timestamp) / 1000 / 60;
+                    if (ageMinutes > 60) {
+                        log(' Recovery state is too old, discarding');
+                        clearRecoveryState();
+                        return resolve(null);
+                    }
+                    resolve(state);
+                };
+                request.onerror = (e) => reject(e);
+            });
         } catch (e) {
-            console.warn('[UberEats Script] Failed to load recovery state:', e);
+            console.warn('[UberEats Script] Failed to load recovery state from IndexedDB:', e);
             return null;
         }
     }
 
     function clearRecoveryState() {
-        sessionStorage.removeItem('ubereats_reload_recovery');
-        sessionStorage.removeItem('ubereats_recovery_state');
-        sessionStorage.removeItem('ubereats_last_order_index');
+        localStorage.removeItem('ubereats_reload_recovery');
+        localStorage.removeItem('ubereats_last_order_index');
+        localStorage.removeItem('ubereats_active_processing_order');
+        initIndexedDB().then(db => {
+            try {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).delete('currentState');
+            } catch (e) {}
+        }).catch(() => {});
     }
 
     function isRecoveryMode() {
-        return sessionStorage.getItem('ubereats_reload_recovery') === 'true';
+        return localStorage.getItem('ubereats_reload_recovery') === 'true';
     }
 
     // --- 2. Helper functions ---
@@ -704,7 +755,7 @@ GM_addStyle(`
             if (hasContent && /Net payout|Sales \(incl\. VAT\)|Offers on items/i.test(drawer.textContent || '')) {
                 return true;
             }
-            await new Promise(resolve => setTimeout(resolve, 150));
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
         return false;
     }
@@ -774,7 +825,7 @@ GM_addStyle(`
             log(' closeExistingDrawer: Found existing drawer, closing it...');
             closeBtn.click();
             await waitForElementToDisappear('button[aria-label="Close"]', 3000);
-            await new Promise(r => setTimeout(r, 300));
+            await new Promise(r => setTimeout(r, 50));
             return true;
         }
         return false;
@@ -829,7 +880,7 @@ GM_addStyle(`
         try {
             window.history.replaceState({}, '', cleanUrl);
             log(' URL reset via replaceState');
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 50));
             await closeExistingDrawer();
             return true;
         } catch (e) {
@@ -849,7 +900,7 @@ GM_addStyle(`
             log(` cleanupAfterOrder: Resetting URL to: ${cleanUrl}`);
             try {
                 window.history.replaceState({}, '', cleanUrl);
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 50));
             } catch (e) {
                 console.warn('[UberEats Script] cleanupAfterOrder: replaceState failed', e);
             }
@@ -859,7 +910,7 @@ GM_addStyle(`
         if (isUrlCorrupted()) {
             console.warn('[UberEats Script] cleanupAfterOrder: URL still corrupted, forcing reset...');
             await resetCorruptedUrl();
-            await new Promise(r => setTimeout(r, 500));
+            await new Promise(r => setTimeout(r, 50));
         }
     }
 
@@ -874,8 +925,8 @@ GM_addStyle(`
         const cleanUrl = getCleanBaseUrl();
 
         // 3. Ensure the row is visible
-        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await new Promise(r => setTimeout(r, 300));
+        row.scrollIntoView({ behavior: 'instant', block: 'center' });
+        await new Promise(r => setTimeout(r, 50));
 
         // Identify click targets with priority order
         const orderIdBtn = row.querySelector('div[role="button"]');
@@ -892,7 +943,7 @@ GM_addStyle(`
                 try {
                     window.history.replaceState({}, '', cleanUrl);
                     log(` openDrawerForRow: Reset URL before attempt ${i + 1}`);
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(r => setTimeout(r, 50));
                 } catch (e) { }
             }
 
@@ -902,8 +953,8 @@ GM_addStyle(`
                 console.warn(`[UberEats Script] openDrawerForRow: ${MAX_EMPTY_BEFORE_RELOAD} consecutive empty drawers - React Router is broken. Forcing page reload...`);
 
                 // Save current state before reload so we can resume
-                saveStateToSession();
-                sessionStorage.setItem('ubereats_reload_recovery', 'true');
+                await saveStateToIndexedDB();
+                localStorage.setItem('ubereats_reload_recovery', 'true');
 
                 // Force full page reload to reset React state
                 log(` Reloading to URL: ${cleanUrl}`);
@@ -944,7 +995,7 @@ GM_addStyle(`
                 window.history.replaceState({}, '', cleanUrl);
             } catch (e) { }
 
-            await new Promise(r => setTimeout(r, 400));
+            await new Promise(r => setTimeout(r, 50));
         }
 
         console.error(`[UberEats Script] openDrawerForRow: Failed after ${attempts} attempts`);
@@ -1054,9 +1105,47 @@ GM_addStyle(`
         const candidate = Array.from(drawer.querySelectorAll('span, p'))
             .map(el => el.textContent ? el.textContent.trim() : "")
             .filter(text => text.length > 0)
-            .find(text => /(items?|issue|missing|damaged|incorrect|charged)/i.test(text));
+            .find(text => /(issue|missing|damaged|incorrect|charged|refunded)/i.test(text));
 
         return candidate || "—";
+    }
+
+    function extractDynamicMetadataFromDrawer(drawer) {
+        if (!drawer) return {};
+
+        let metadata = {};
+        
+        // Find all labels that might match
+        const labels = drawer.querySelectorAll('p, div[data-baseweb="typo-labellarge"], div[data-baseweb="typo-labelsmall"]');
+        for (const labelEl of labels) {
+            const label = labelEl.textContent ? labelEl.textContent.trim() : "";
+            // Skip empty labels, extremely long labels, and prices disguised as labels
+            if (!label || label.length > 40 || label.includes('£')) continue;
+            
+            const parentBlock = labelEl.closest('div[data-baseweb="block"]');
+            if (parentBlock) {
+                const valueBlock = parentBlock.nextElementSibling;
+                if (valueBlock && valueBlock.textContent) {
+                    const valStr = valueBlock.textContent.trim();
+                    if (valStr.length > 0 && valStr.length < 50) {
+                        // STRICT FILTERING: Prevent item modifiers (e.g. "Choice of Noodles") from being mistakenly extracted as metadata
+                        const isFinancialLabel = /Sales|Marketplace|Payout|Tax|Fee|Promotion|Refund|Subtotal|Offer|Tip|Total|Adjustment|Delivery|Service|VAT|Paid|Gross|Amount/i.test(label);
+                        
+                        if (!isFinancialLabel) continue;
+
+                        // If it contains a negative sign and digits, parse as float
+                        let num = parseFloat(valStr.replace(/[^\d.-]/g, ''));
+                        if (!isNaN(num) && valStr.match(/\d/)) {
+                            metadata[label] = num;
+                        } else {
+                            metadata[label] = valStr;
+                        }
+                        log(`  extractDynamicMetadata: Found financial "${label}" = ${metadata[label]}`);
+                    }
+                }
+            }
+        }
+        return metadata;
     }
 
     // Detect if an order was cancelled (should be excluded from counting)
@@ -1087,53 +1176,132 @@ GM_addStyle(`
         if (!drawer) return [];
 
         const items = [];
-        // Removed deduplication logic as it might skip valid items with same name/price
+        let itemsContainer = null;
+        
+        // Strategy 1: Use progress-steps
+        const progressSteps = drawer.querySelector('ol[data-baseweb="progress-steps"]');
+        if (progressSteps && progressSteps.nextElementSibling && progressSteps.nextElementSibling.classList.contains('fs-mask')) {
+            itemsContainer = progressSteps.nextElementSibling;
+            logDebug(`[Items] Found itemsContainer via progressSteps. Element tagName: ${itemsContainer.tagName}`);
+        } else {
+            // Strategy 2: Find first price and trace up to fs-mask
+            const firstPrice = drawer.querySelector('p[data-baseweb="typo-monoparagraphmedium"]');
+            if (firstPrice) {
+                let parent = firstPrice.parentElement;
+                while (parent && parent !== drawer) {
+                    if (parent.classList.contains('fs-mask')) {
+                        itemsContainer = parent;
+                        logDebug(`[Items] Found itemsContainer via firstPrice fallback. Element tagName: ${itemsContainer.tagName}`);
+                        break;
+                    }
+                    parent = parent.parentElement;
+                }
+            }
+        }
 
-        // Target the accordion headers which contain the main item details.
-        // These are div elements with role="button".
-        const itemHeaders = drawer.querySelectorAll('div[role="button"]');
+        if (!itemsContainer) {
+            log('Could not find items container');
+            return [];
+        }
 
-        for (const header of itemHeaders) {
-            // 1. Get Quantity
-            const quantityLabel = header.querySelector('div[data-baseweb="typo-labelsmall"]');
-            if (!quantityLabel) continue; // Not an item header
+        logDebug(`[Items] itemsContainer has ${itemsContainer.children.length} children`);
 
-            const quantityText = quantityLabel.textContent.trim();
-            const quantity = parseInt(quantityText);
-            if (isNaN(quantity)) continue;
+        const itemElements = [];
+        for (const child of itemsContainer.children) {
+            if (child.tagName === 'UL') {
+                for (const li of child.children) {
+                    if (li.tagName === 'LI') {
+                        itemElements.push({
+                            modifiersContainer: li,
+                            header: li.querySelector('div[role="button"]') || li.firstElementChild
+                        });
+                    }
+                }
+            } else if (child.tagName === 'DIV') {
+                itemElements.push({
+                    modifiersContainer: null,
+                    header: child
+                });
+            } else {
+                logDebug(`[Items] Skipping child due to unknown tagName: ${child.tagName}`);
+            }
+        }
 
-            // 2. Get Item Name
-            const itemNameEl = header.querySelector('div[data-baseweb="typo-labelmedium"]');
-            if (!itemNameEl) continue;
+        logDebug(`[Items] Found ${itemElements.length} potential items to extract`);
+
+        for (const item of itemElements) {
+            const header = item.header;
+            const modifiersContainer = item.modifiersContainer;
+
+            if (!header) continue;
+
+            const quantityLabel = header.querySelector('div[data-baseweb="typo-labelsmall"], span[data-baseweb="typo-labelsmall"]');
+            if (!quantityLabel) {
+                logDebug(`[Items] Skipping: no quantityLabel found in header`);
+                continue;
+            }
+
+            const quantity = parseInt(quantityLabel.textContent.trim());
+            if (isNaN(quantity)) {
+                logDebug(`[Items] Skipping: quantity is NaN`);
+                continue;
+            }
+
+            const itemNameEl = header.querySelector('div[data-baseweb="typo-labelmedium"], span[data-baseweb="typo-labelmedium"]');
+            if (!itemNameEl) {
+                logDebug(`[Items] Skipping: no itemNameEl found in header`);
+                continue;
+            }
 
             const itemName = itemNameEl.textContent.trim();
 
-            // 3. Get Price
             const priceEl = header.querySelector('[data-baseweb="typo-monoparagraphmedium"]');
             const priceText = priceEl ? priceEl.textContent.trim() : "";
             const priceValue = parseFloat(priceText.replace(/[^\d.-]/g, ''));
 
-            // 4. Filter out non-food items and modifiers
-            // Skip timestamps
+            logDebug(`[Items] Successfully parsed item: Qty=${quantity}, Name="${itemName}", Price=${priceValue}`);
+
             if (/^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(itemName)) {
+                logDebug(`[Items] Skipping: itemName matched timestamp pattern`);
                 continue;
             }
 
-            // Skip Modifiers and Options
-            if (/^(Spice\s+\d+|No(\s+|$)|Add\s+|Extra\s+|Choose\s+|Option\s+|Cutlery|Napkins|Wheat Noodle|Rice Noodle|Udon Noodle|Sweet Potato Noodle)/i.test(itemName)) {
-                continue;
-            }
-
-            // 5. Filter out items with 0 price (likely modifiers or duplicate headers without price)
-            if (priceValue <= 0) {
-                continue;
+            const modifiers = [];
+            if (modifiersContainer) {
+                const categoryTitles = modifiersContainer.querySelectorAll('p[data-baseweb="typo-paragraphsmall"]');
+                categoryTitles.forEach(catTitleEl => {
+                    const categoryName = catTitleEl.textContent.trim();
+                    const categoryBlock = catTitleEl.closest('div._qw') || catTitleEl.parentElement.parentElement;
+                    if (!categoryBlock) return;
+                    
+                    const optionNameEls = categoryBlock.querySelectorAll('div[data-baseweb="typo-labelmedium"]');
+                    optionNameEls.forEach(optNameEl => {
+                        const optName = optNameEl.textContent.trim();
+                        const optContainer = optNameEl.closest('div._af') || optNameEl.parentElement;
+                        
+                        const optQtyEl = optContainer.querySelector('div[data-baseweb="typo-labelsmall"]');
+                        const optQty = optQtyEl ? parseInt(optQtyEl.textContent.trim()) || 1 : 1;
+                        
+                        const optRow = optContainer.parentElement;
+                        const optPriceEl = optRow.querySelector('[data-baseweb="typo-monoparagraphmedium"]');
+                        const optPrice = optPriceEl ? parseFloat(optPriceEl.textContent.replace(/[^\d.-]/g, '')) : 0;
+                        
+                        modifiers.push({
+                            category: categoryName,
+                            name: optName,
+                            quantity: optQty,
+                            priceValue: isNaN(optPrice) ? 0 : optPrice
+                        });
+                    });
+                });
             }
 
             items.push({
                 name: itemName,
                 quantity: quantity,
                 price: priceText,
-                priceValue: isNaN(priceValue) ? 0 : priceValue
+                priceValue: isNaN(priceValue) ? 0 : priceValue,
+                modifiers: modifiers
             });
         }
 
@@ -1369,7 +1537,10 @@ GM_addStyle(`
         const totalCountEl = findElementByText('div', 'Showing', 'results');
         if (!totalCountEl) return null;
         try {
-            const count = parseInt(totalCountEl.textContent.match(/Showing (\d+) results/)[1]);
+            // Handle formats like "Showing 1,234 results" or "Showing 1,234,567 results"
+            const match = totalCountEl.textContent.match(/Showing ([\d,]+) results/);
+            if (!match) return null;
+            const count = parseInt(match[1].replace(/,/g, ''), 10);
             return isNaN(count) ? null : count;
         } catch (e) {
             return null;
@@ -1436,7 +1607,7 @@ GM_addStyle(`
                 log(` Drawer validation successful: Found "${expectedOrderId}"`);
                 return true;
             }
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise(resolve => setTimeout(resolve, 50));
         }
         const snippet = (drawer.textContent || '').substring(0, 100).replace(/\s+/g, ' ');
         console.warn(`[UberEats Script] Drawer validation FAILED: Did not find "${expectedOrderId}" after ${timeout}ms. Content dump: "${snippet}..."`);
@@ -1475,7 +1646,13 @@ GM_addStyle(`
         window.orderIssueData = {};
         window.orderItemsData = {};
         window.orderDateData = {};
+        window.orderShopData = {};
+        window.orderTimeData = {};
+        window.orderCustomerData = {};
+        window.orderFulfilmentData = {};
+        window.orderCourierData = {};
         window.orderSubtotalData = {};
+        window.orderFinancialsData = {};
         window.orderCancelledData = {};
         window.orderItemsDetected = {};
         window.processedOrderIds = new Set();
@@ -1545,6 +1722,16 @@ GM_addStyle(`
                 const orderId = (orderIdEl.textContent || '').trim();
                 if (!orderId || window.processedOrderIds.has(orderId)) continue;
 
+                // Check for crash loop BEFORE processing
+                const cachedCrashOrderId = localStorage.getItem('ubereats_active_processing_order');
+                if (cachedCrashOrderId === orderId) {
+                    console.error(`[UberEats Script] CRASH LOOP DETECTED: Script crashed previously on order ${orderId}. Marking as permanent failure to prevent loop.`);
+                    window.processedOrderIds.add(orderId);
+                    window.orderIssueData[orderId] = "Permanent Crash Failure";
+                    localStorage.removeItem('ubereats_active_processing_order');
+                    continue;
+                }
+
                 // Update progress display based on mode
                 const currentCount = window.processedOrderIds.size;
                 const statusText = `Processing order ${currentCount + 1} of ${totalOrderCount}`;
@@ -1573,6 +1760,33 @@ GM_addStyle(`
 
                 log(` Order ${orderId}: Starting processing (${currentCount + 1}/${totalOrderCount})`);
 
+                // Mark order as active to prevent crash loops
+                localStorage.setItem('ubereats_active_processing_order', orderId);
+
+                // Extract metadata from the TABLE ROW BEFORE opening drawer
+                const shopCell = row.querySelector('td:nth-child(2)');
+                const dateCell = row.querySelector('td:nth-child(3)');
+                const timeCell = row.querySelector('td:nth-child(4)');
+                const customerCell = row.querySelector('td:nth-child(5)');
+                const fulfilmentCell = row.querySelector('td:nth-child(6)');
+                const courierCell = row.querySelector('td:nth-child(7)');
+
+                if (shopCell) window.orderShopData[orderId] = shopCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                if (dateCell) window.orderDateData[orderId] = dateCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                if (timeCell) window.orderTimeData[orderId] = timeCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                if (customerCell) window.orderCustomerData[orderId] = customerCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                if (fulfilmentCell) window.orderFulfilmentData[orderId] = fulfilmentCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                if (courierCell) window.orderCourierData[orderId] = courierCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+
+                // Extract Issue from row (8th column)
+                const issueCell = row.querySelector('td:nth-child(8)');
+                let rowIssue = "—";
+                if (issueCell) {
+                    rowIssue = issueCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                    if (!rowIssue) rowIssue = "—";
+                }
+                window.orderIssueData[orderId] = rowIssue;
+
                 // Extract subtotal from the TABLE ROW (last cell) BEFORE opening drawer
                 const rowSubtotalCell = row.lastElementChild;
                 let subtotal = { text: "—", value: 0 };
@@ -1585,13 +1799,11 @@ GM_addStyle(`
                     }
                 }
 
-                // Removed redundant second scrollIntoView and 300ms wait here to speed up processing
-
-                // Open drawer
+                // Try to open drawer
                 log(` Order ${orderId}: Attempting to open drawer...`);
                 let drawer = await openDrawerForRow(row, 5);
                 let offer = { text: "—", value: 0 };
-                let issue = "—";
+                let issue = window.orderIssueData[orderId] || "—";
 
                 if (drawer) {
                     // Validate drawer content
@@ -1601,7 +1813,7 @@ GM_addStyle(`
                         console.error(`[UberEats Script] Order ${orderId}: ⚠️ DRAWER VALIDATION FAILED - Retrying...`);
                         if (row.click) {
                             row.click();
-                            await new Promise(r => setTimeout(r, 1500));
+                            await new Promise(r => setTimeout(r, 500));
                         }
                         const retryCorrect = await waitForOrderToLoadInDrawer(drawer, orderId, 4000);
                         if (!retryCorrect) {
@@ -1617,14 +1829,19 @@ GM_addStyle(`
                     console.log(`[UberEats Script] ▶ Order ${orderId}: Drawer opened & verified, extracting data...`);
                     await waitForDrawerContent(drawer, 8000);
                     offer = extractOfferDataFromDrawer(drawer);
-                    issue = extractIssueDataFromDrawer(drawer);
+                    const drawerIssue = extractIssueDataFromDrawer(drawer);
+                    if (drawerIssue && drawerIssue !== "—" && issue === "—") {
+                        issue = drawerIssue;
+                    }
                     const items = extractItemsFromDrawer(drawer);
                     const date = extractDateFromDrawer(drawer, orderId);
                     const cancelled = isCancelledOrder(drawer);
+                    const financials = extractDynamicMetadataFromDrawer(drawer);
 
                     window.orderCancelledData[orderId] = cancelled;
                     window.orderItemsData[orderId] = items;
                     window.orderDateData[orderId] = date;
+                    window.orderFinancialsData[orderId] = financials;
 
                     if (cancelled) {
                         console.warn(`[UberEats Script] ⚠️ Order ${orderId}: CANCELLED ORDER DETECTED`);
@@ -1787,16 +2004,31 @@ GM_addStyle(`
                 }
                 await waitForElementToDisappear('button[aria-label="Close"]', 3000);
                 
-                // Add a random delay between 0.5s and 1s to avoid rate limiting (403 Forbidden)
-                // Natural drawer open/close already adds ~3-4s per order
-                const delayMs = Math.floor(Math.random() * 500) + 500;
-                log(` Order ${orderId}: Waiting ${delayMs}ms before next order to avoid rate limits...`);
+                // We dramatically reduced the manual delay to speed up processing.
+                // Natural drawer open/close provides enough spacing.
+                const delayMs = 50;
+                log(` Order ${orderId}: Waiting ${delayMs}ms before next order...`);
                 await new Promise(resolve => setTimeout(resolve, delayMs));
+
+                // Clean up active processing marker
+                localStorage.removeItem('ubereats_active_processing_order');
 
                 // Clean up URL to prevent UUID accumulation
                 await cleanupAfterOrder();
 
                 log(` Order ${orderId}: Complete\n`);
+                // Virtualize DOM: Hide the row completely to free up rendering and layout memory
+                // This prevents the browser from crashing with 30,000 DOM elements
+                if (row && typeof row.style !== 'undefined') {
+                    row.style.display = 'none';
+                    row.style.contentVisibility = 'hidden';
+                }
+
+                // Save state to IndexedDB after every order to prevent any data loss
+                if (window.processedOrderIds.size > 0) {
+                    logDebug(` Processed ${window.processedOrderIds.size} orders. Saving state to IndexedDB...`);
+                    await saveStateToIndexedDB();
+                }
             }
 
             // 3. Check if we made progress
@@ -1859,8 +2091,8 @@ GM_addStyle(`
                 let waitCount = 0;
                 let newRowsLoaded = false;
                 
-                while (waitCount < 25) { // Max 5 seconds wait per scroll attempt
-                    await new Promise(resolve => setTimeout(resolve, 200));
+                while (waitCount < 100) { // Max 5 seconds wait per scroll attempt
+                    await new Promise(resolve => setTimeout(resolve, 50));
                     waitCount++;
                     
                     const newRowCount = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]').length;
@@ -1871,7 +2103,7 @@ GM_addStyle(`
                     }
                     
                     // If still stuck after 2.5s, try scrolling again
-                    if (waitCount === 12 && lastRow) {
+                    if (waitCount === 50 && lastRow) {
                         lastRow.scrollIntoView({ block: 'start', behavior: 'auto' });
                         await new Promise(resolve => setTimeout(resolve, 100));
                         lastRow.scrollIntoView({ block: 'end', behavior: 'auto' });
@@ -1883,7 +2115,7 @@ GM_addStyle(`
                 }
                 
                 // Add an extra small delay before the next iteration
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 50));
             }
         }
 
@@ -2016,6 +2248,46 @@ GM_addStyle(`
             // Add to grand total
             finalTotalSubtotalSum += subtotalValue;
 
+            // TRACK EVERY ORDER FOR MARKET BASKET CSV (regardless of offers)
+            if (items && items.length > 0) {
+                if (!summaryByDate[date].detailedCsvRows) summaryByDate[date].detailedCsvRows = [];
+                const financials = window.orderFinancialsData[orderId] || {};
+                
+                const shop = window.orderShopData[orderId] || "";
+                const time = window.orderTimeData[orderId] || "";
+                const customer = window.orderCustomerData[orderId] || "";
+                const fulfilment = window.orderFulfilmentData[orderId] || "";
+                const courier = window.orderCourierData[orderId] || "";
+                const issue = window.orderIssueData[orderId] || "";
+
+                summaryByDate[date].detailedCsvRows.push({
+                    id: orderId,
+                    shop: shop,
+                    time: time,
+                    customer: customer,
+                    fulfilment: fulfilment,
+                    courier: courier,
+                    issue: issue,
+                    subtotalValue: subtotalValue,
+                    financials: financials,
+                    items: items
+                });
+
+                const itemCountByName = {};
+                items.forEach(item => {
+                    if (!itemCountByName[item.name]) {
+                        itemCountByName[item.name] = { totalQty: 0 };
+                    }
+                    itemCountByName[item.name].totalQty += item.quantity;
+                });
+                const allItemsDesc = Object.entries(itemCountByName).map(([name, data]) => `${name}×${data.totalQty}`).join(', ');
+                summaryByDate[date].orderDetails.push({
+                    id: orderId,
+                    items: allItemsDesc,
+                    offer: offer ? offer.value : 0
+                });
+            }
+
             // Only process orders that have offers (positive or negative)
             // FIX: Changed > 0 to !== 0 to handle negative discounts
             if (offer && offer.value !== 0) {
@@ -2065,27 +2337,8 @@ GM_addStyle(`
                         });
                     }
 
-                    // Pattern: contains word "Meal" + contains "with" (or & / + / ▪️)
-                    // e.g. "Beef Noodle Hotpot Meal with Fried Chicken Strips"
-                    const mealDealItems = consolidatedItems.filter(item =>
-                        /\bMeal\b/i.test(item.name) &&
-                        (/\bwith\b/i.test(item.name) || /&|\+/.test(item.name) || /▪️/.test(item.name))
-                    );
-                    const nonMealDealItems = consolidatedItems.filter(item => !mealDealItems.includes(item));
-
-                    if (nonMealDealItems.length > 0) {
-                        logDebug(` Non-bundle items excluded from items_summary:`);
-                        nonMealDealItems.forEach(item => logDebug(`  - "${item.name}" (qty: ${item.quantity})`));
-                    }
-                    if (mealDealItems.length > 0) {
-                        logDebug(` Meal deal bundles matched:`);
-                        mealDealItems.forEach(item => logDebug(`  ✓ "${item.name}" (qty: ${item.quantity})`));
-                    } else {
-                        logDebug(` No meal deal bundles found in this order (offer may be a percentage discount)`);
-                    }
-
                     let orderItemsDesc = [];
-                    mealDealItems.forEach(item => {
+                    consolidatedItems.forEach(item => {
                         // Normalize: strip (N), ▪️, ✔️ so DB key is stable even if Uber Eats changes decorators
                         const itemKey = normalizeItemKey(item.name);
                         logDebug(`  KEY: "${item.name}" → "${itemKey}"`);
@@ -2093,18 +2346,16 @@ GM_addStyle(`
                             summaryByDate[date].itemCounts[itemKey] = 0;
                         }
                         const prev = summaryByDate[date].itemCounts[itemKey];
-                        const actualSold = Math.ceil(item.quantity / 2);
+                        
+                        // Default to actual quantity. Only divide by 2 if it's explicitly a BOGO meal deal
+                        // so we don't undercount regular non-discounted side items in the same basket.
+                        const isMealDeal = /\bMeal\b/i.test(item.name) && (/\bwith\b/i.test(item.name) || /&|\+/.test(item.name) || /▪️/.test(item.name));
+                        const actualSold = isMealDeal ? Math.ceil(item.quantity / 2) : item.quantity;
+                        
                         summaryByDate[date].itemCounts[itemKey] += actualSold;
                         summaryByDate[date].totalDiscountedItems += actualSold;
                         logDebug(`  AGGREGATION: "${itemKey}" ${prev} + ${actualSold} = ${summaryByDate[date].itemCounts[itemKey]}`);
                         orderItemsDesc.push(`${itemKey}×${actualSold}`);
-                    });
-
-                    // Track per-order breakdown for debugging
-                    summaryByDate[date].orderDetails.push({
-                        id: orderId,
-                        items: orderItemsDesc.join(', '),
-                        offer: offer.value
                     });
 
                     logDebug(`========== END ORDER ${orderId} ==========\n`);
@@ -2252,6 +2503,85 @@ GM_addStyle(`
             }
         }
 
+        // 1. Find Max Modifiers and Metadata Keys
+        let maxModifiers = 0;
+        let metadataKeys = new Set();
+        
+        for (const date of Object.keys(summaryByDate)) {
+            const rows = summaryByDate[date].detailedCsvRows;
+            if (rows) {
+                rows.forEach(order => {
+                    if (order.financials) {
+                        Object.keys(order.financials).forEach(k => metadataKeys.add(k));
+                    }
+                    order.items.forEach(item => {
+                        if (item.modifiers && item.modifiers.length > maxModifiers) {
+                            maxModifiers = item.modifiers.length;
+                        }
+                    });
+                });
+            }
+        }
+
+        const sortedMetadataKeys = Array.from(metadataKeys).sort();
+
+        // 2. Build Header
+        let csvContent = "Date,Time,OrderID,ShopDetails,Customer,Fulfilment,Courier,Issue,Subtotal";
+        for (const k of sortedMetadataKeys) {
+            csvContent += `,"${k.replace(/"/g, '""')}"`;
+        }
+        csvContent += ",ItemQty,ItemName,ItemPrice";
+        for (let i = 1; i <= maxModifiers; i++) {
+            csvContent += `,Mod${i}_Category,Mod${i}_Name,Mod${i}_Qty,Mod${i}_Price`;
+        }
+        csvContent += "\n";
+
+        // 3. Build Rows
+        for (const date of Object.keys(summaryByDate)) {
+            const rows = summaryByDate[date].detailedCsvRows;
+            if (rows) {
+                rows.forEach(order => {
+                    order.items.forEach(item => {
+                        const safeItemName = '"' + normalizeItemKey(item.name || '').replace(/"/g, '""') + '"';
+                        const safeShop = '"' + (order.shop || '').replace(/"/g, '""') + '"';
+                        const safeCustomer = '"' + (order.customer || '').replace(/"/g, '""') + '"';
+                        const safeFulfilment = '"' + (order.fulfilment || '').replace(/"/g, '""') + '"';
+                        const safeCourier = '"' + (order.courier || '').replace(/"/g, '""') + '"';
+                        const safeIssue = '"' + (order.issue || '').replace(/"/g, '""') + '"';
+
+                        let rowStr = `${date},${order.time},${order.id},${safeShop},${safeCustomer},${safeFulfilment},${safeCourier},${safeIssue},${order.subtotalValue}`;
+                        
+                        // Append dynamic metadata
+                        for (const k of sortedMetadataKeys) {
+                            const val = order.financials && order.financials[k] !== undefined ? order.financials[k] : "";
+                            rowStr += `,"${String(val).replace(/"/g, '""')}"`;
+                        }
+                        
+                        rowStr += `,${item.quantity},${safeItemName},${item.priceValue}`;
+                        
+                        if (item.modifiers) {
+                            for (let i = 0; i < maxModifiers; i++) {
+                                if (i < item.modifiers.length) {
+                                    const mod = item.modifiers[i];
+                                    const safeCat = '"' + (mod.category || '').replace(/"/g, '""') + '"';
+                                    const safeName = '"' + normalizeItemKey(mod.name || '').replace(/"/g, '""') + '"';
+                                    rowStr += `,${safeCat},${safeName},${mod.quantity},${mod.priceValue}`;
+                                } else {
+                                    // Empty columns for missing modifiers
+                                    rowStr += `,,,,`;
+                                }
+                            }
+                        }
+                        csvContent += rowStr + "\n";
+                    });
+                });
+            }
+        }
+        // Use Blob with UTF-8 BOM (\uFEFF) so Excel correctly handles emojis and non-breaking spaces
+        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const csvUrl = URL.createObjectURL(blob);
+        const downloadLinkHTML = `<div style="margin-top: 15px; text-align: center;"><a href="${csvUrl}" download="ubereats_market_basket_orders.csv" style="padding: 12px 24px; background: #000; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">📥 Download Full Order CSV</a></div>`;
+
         Swal.fire({
             title: 'Calculation Complete!',
             html: `
@@ -2264,6 +2594,7 @@ GM_addStyle(`
                 </div>
                 ${tableHTML}
                 ${syncStatusHTML}
+                ${downloadLinkHTML}
             `,
             icon: 'success',
             width: '800px',
@@ -2376,7 +2707,9 @@ GM_addStyle(`
                 const rows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
 
                 if (resultsText && rows.length > 0) {
-                    log(` Orders loaded: "${resultsText.textContent}" with ${rows.length} rows`);
+                    let logText = resultsText.textContent.trim();
+                    if (logText.length > 50) logText = logText.substring(0, 50) + "...";
+                    log(` Orders loaded: "${logText}" with ${rows.length} rows`);
                     resolve(true);
                 } else if (Date.now() - startTime > maxWaitMs) {
                     log(' Timeout waiting for orders to load');
@@ -2429,28 +2762,35 @@ GM_addStyle(`
             // *** RECOVERY MODE CHECK ***
             if (isRecoveryMode()) {
                 log(' Recovery mode detected - restoring state and resuming...');
-                const recoveryState = loadStateFromSession();
-                if (recoveryState) {
-                    window.processedOrderIds = new Set(recoveryState.processedOrderIds);
-                    window.orderOfferData = recoveryState.orderOfferData;
-                    window.orderSubtotalData = recoveryState.orderSubtotalData;
-                    window.orderItemsData = recoveryState.orderItemsData;
-                    window.orderDateData = recoveryState.orderDateData;
-                    window.orderCancelledData = recoveryState.orderCancelledData;
+                loadStateFromIndexedDB().then(recoveryState => {
+                    if (recoveryState) {
+                        window.processedOrderIds = new Set(recoveryState.processedOrderIds);
+                        window.orderOfferData = recoveryState.orderOfferData;
+                        window.orderSubtotalData = recoveryState.orderSubtotalData;
+                        window.orderItemsData = recoveryState.orderItemsData;
+                        window.orderDateData = recoveryState.orderDateData;
+                        window.orderShopData = recoveryState.orderShopData || {};
+                        window.orderTimeData = recoveryState.orderTimeData || {};
+                        window.orderCustomerData = recoveryState.orderCustomerData || {};
+                        window.orderFulfilmentData = recoveryState.orderFulfilmentData || {};
+                        window.orderCourierData = recoveryState.orderCourierData || {};
+                        window.orderFinancialsData = recoveryState.orderFinancialsData || {};
+                        window.orderCancelledData = recoveryState.orderCancelledData;
 
-                    log(` Restored ${window.processedOrderIds.size} processed orders from recovery state`);
-                    clearRecoveryState();
+                        log(` Restored ${window.processedOrderIds.size} processed orders from recovery state`);
+                        clearRecoveryState();
 
-                    (async () => {
-                        await waitForOrdersToLoad();
-                        await new Promise(r => setTimeout(r, 500));
-                        log(' Auto-resuming processing after recovery...');
-                        processOrders();
-                    })();
-                } else {
-                    log(' No valid recovery state found, clearing flags');
-                    clearRecoveryState();
-                }
+                        (async () => {
+                            await waitForOrdersToLoad();
+                            await new Promise(r => setTimeout(r, 500));
+                            log(' Auto-resuming processing after recovery...');
+                            processOrders();
+                        })();
+                    } else {
+                        log(' No valid recovery state found, clearing flags');
+                        clearRecoveryState();
+                    }
+                });
             }
         }
     }
