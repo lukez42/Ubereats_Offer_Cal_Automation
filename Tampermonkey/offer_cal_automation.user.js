@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.9
+// @version      9.10
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -613,7 +613,7 @@ GM_addStyle(`
                 store.put(state, 'currentState');
                 tx.oncomplete = () => {
                     log(` Saved recovery state to IndexedDB: ${state.processedOrderIds.length} orders processed`);
-                    console.log('%c[DB] Successfully saved recovery state to IndexedDB!', 'background: #06C167; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;', `${state.processedOrderIds.length} orders processed`);
+                    logDebug('[DB] Successfully saved recovery state to IndexedDB!', `${state.processedOrderIds.length} orders processed`);
                     resolve();
                 };
                 tx.onerror = (e) => reject(e);
@@ -1861,42 +1861,60 @@ GM_addStyle(`
                             console.error(`[UberEats Script] Order ${orderId}: ❌ Validation failed after retry. Skipping.`);
                             drawer = null;
                         } else {
-                            log(` Order ${orderId}: Validation successful after retry.`);
+                            logDebug(` Order ${orderId}: Validation successful after retry.`);
+                            logDebug(`▶ Order ${orderId}: Drawer opened & verified, extracting data...`);
                         }
-                    }
-                }
-
-                if (drawer) {
-                    console.log(`[UberEats Script] ▶ Order ${orderId}: Drawer opened & verified, extracting data...`);
-                    await waitForDrawerContent(drawer, 8000);
-                    offer = extractOfferDataFromDrawer(drawer);
-                    const drawerIssue = extractIssueDataFromDrawer(drawer);
-                    if (drawerIssue && drawerIssue !== "—" && issue === "—") {
-                        issue = drawerIssue;
-                    }
-                    const items = extractItemsFromDrawer(drawer);
-                    const date = extractDateFromDrawer(drawer, orderId);
-                    const cancelled = isCancelledOrder(drawer);
-                    const financials = extractDynamicMetadataFromDrawer(drawer);
-
-                    window.orderCancelledData[orderId] = cancelled;
-                    window.orderItemsData[orderId] = items;
-                    window.orderDateData[orderId] = date;
-                    window.orderFinancialsData[orderId] = financials;
-
-                    if (cancelled) {
-                        console.warn(`[UberEats Script] ⚠️ Order ${orderId}: CANCELLED ORDER DETECTED`);
-                    }
-
-                    // ALWAYS log extraction results (not gated by DEBUG)
-                    console.log(`[UberEats Script] ✅ Order ${orderId}: offer="${offer.text}" (£${offer.value}), subtotal="${subtotal.text}" (£${subtotal.value}), items=${items.length}, date="${date}", cancelled=${cancelled}`);
-                    if (items.length > 0) {
-                        console.log(`[UberEats Script]    Items: ${items.map(i => `${i.name} x${i.quantity} @ ${i.price}`).join(' | ')}`);
+                    } else {
+                        logDebug(`▶ Order ${orderId}: Drawer opened & verified, extracting data...`);
                     }
                 } else {
-                    console.warn(`[UberEats Script] ❌ Order ${orderId}: Drawer timeout or validation failed`);
-                    issue = "Drawer Error";
-                    window.orderCancelledData[orderId] = false;
+                    logDebug(` Order ${orderId}: NO VALID DRAWER FOUND inside loop. Processing blank...`);
+                }
+
+                // --- DATA EXTRACTION ---
+                try {
+                    if (drawer) {
+                        await waitForDrawerContent(drawer, 8000);
+                        offer = extractOfferDataFromDrawer(drawer);
+                        const drawerIssue = extractIssueDataFromDrawer(drawer);
+                        if (drawerIssue && drawerIssue !== "—" && issue === "—") {
+                            issue = drawerIssue;
+                        }
+                        const items = extractItemsFromDrawer(drawer);
+                        let date = extractDateFromDrawer(drawer, orderId);
+                        
+                        // Fallback to row extraction if drawer date fails
+                        if (!date || date === "Unknown Date") {
+                            const dateCell = row.querySelector('td:nth-child(3)');
+                            if (dateCell) {
+                                date = dateCell.innerText.trim().replace(/[\u00A0\n]/g, ' ');
+                                logDebug(` Order ${orderId}: Drawer date missing, fell back to row date "${date}"`);
+                            }
+                        }
+
+                        const cancelled = isCancelledOrder(drawer);
+                        const financials = extractDynamicMetadataFromDrawer(drawer);
+
+                        window.orderCancelledData[orderId] = cancelled;
+                        window.orderItemsData[orderId] = items;
+                        window.orderDateData[orderId] = date;
+                        window.orderFinancialsData[orderId] = financials;
+
+                        if (cancelled) {
+                            console.warn(`[UberEats Script] ⚠️ Order ${orderId}: CANCELLED ORDER DETECTED`);
+                        }
+
+                        logDebug(`✅ Order ${orderId}: offer="${offer.text}" (£${offer.value}), subtotal="${subtotal.text}" (£${subtotal.value}), items=${items.length}, date="${date}", cancelled=${cancelled}`);
+                        if (items.length > 0) {
+                            logDebug(`   Items: ${items.map(i => `${i.name} x${i.quantity} @ ${i.price}`).join(' | ')}`);
+                        }
+                    } else {
+                        console.warn(`[UberEats Script] ❌ Order ${orderId}: Drawer timeout or validation failed`);
+                        issue = "Drawer Error";
+                        window.orderCancelledData[orderId] = false;
+                    }
+                } catch (err) {
+                    console.error(`[UberEats Script] Error extracting data for order ${orderId}:`, err);
                 }
 
                 window.orderOfferData[orderId] = offer;
