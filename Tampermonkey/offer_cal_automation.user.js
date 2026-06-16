@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.4
+// @version      9.5
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -1036,9 +1036,9 @@ GM_addStyle(`
             const label = paragraph.textContent ? paragraph.textContent.trim() : "";
             if (!label) continue;
 
-            // Look for "Offers on items" (with or without VAT text), Promotion, or Discount
-            if (/Offers on items|Promotion|Discount/i.test(label)) {
-                log(` extractOfferDataFromDrawer: Found offer label in paragraph: "${label}"`);
+            // Look for "Offers on items" (with or without VAT text)
+            if (/Offers on items/i.test(label)) {
+                log(` extractOfferDataFromDrawer: Found "Offers on items" in paragraph: "${label}"`);
 
                 // The value is in a sibling element. Walk up to find the parent container
                 const parentBlock = paragraph.closest('div[data-baseweb="block"]');
@@ -2378,26 +2378,110 @@ GM_addStyle(`
                         });
                     }
 
-                    let orderItemsDesc = [];
-                    consolidatedItems.forEach(item => {
-                        // Normalize: strip (N), ▪️, ✔️ so DB key is stable even if Uber Eats changes decorators
-                        const itemKey = normalizeItemKey(item.name);
-                        logDebug(`  KEY: "${item.name}" → "${itemKey}"`);
-                        if (!summaryByDate[date].itemCounts[itemKey]) {
-                            summaryByDate[date].itemCounts[itemKey] = 0;
-                        }
-                        const prev = summaryByDate[date].itemCounts[itemKey];
-                        
-                        // Default to actual quantity. Only divide by 2 if it's explicitly a BOGO meal deal
-                        // so we don't undercount regular non-discounted side items in the same basket.
-                        const isMealDeal = /\bMeal\b/i.test(item.name) && (/\bwith\b/i.test(item.name) || /&|\+/.test(item.name) || /▪️/.test(item.name));
-                        const actualSold = isMealDeal ? Math.ceil(item.quantity / 2) : item.quantity;
-                        
-                        summaryByDate[date].itemCounts[itemKey] += actualSold;
-                        summaryByDate[date].totalDiscountedItems += actualSold;
-                        logDebug(`  AGGREGATION: "${itemKey}" ${prev} + ${actualSold} = ${summaryByDate[date].itemCounts[itemKey]}`);
-                        orderItemsDesc.push(`${itemKey}×${actualSold}`);
+                    // STEP 0.5: Filter to ONLY include BOGO meal combos
+                    // BOGO items start with a number in parentheses: "(1)", "(2)", "(3)", etc.
+                    // Other items like "Stewed Beef Rice Meal" or "Pork Saozi Noodle Hotpot" are NOT BOGO items
+                    const bogoMealPattern = /^\(\d+\)/; // Matches "(1)", "(2)", "(3)", etc. at the start
+                    const bogoEligibleItems = consolidatedItems.filter(item => bogoMealPattern.test(item.name));
+
+                    const nonBogoItems = consolidatedItems.filter(item => !bogoMealPattern.test(item.name));
+                    if (nonBogoItems.length > 0) {
+                        logDebug(` Non-BOGO items excluded from counting:`);
+                        nonBogoItems.forEach(item => {
+                            logDebug(`  - "${item.name}" (no meal combo prefix, skipping)`);
+                        });
+                    }
+
+                    // STEP 1: Find all items that could be BOGO candidates (qty >= 2) from BOGO-ELIGIBLE items only
+                    const bogoCandidates = bogoEligibleItems.filter(item => item.quantity >= 2);
+                    logDebug(` BOGO candidates (qty >= 2): ${bogoCandidates.length} items`);
+
+                    // STEP 2: Check for MULTI-BOGO scenario
+                    const offerAbs = Math.abs(offer.value);
+                    let totalExpectedDiscount = 0;
+                    bogoCandidates.forEach(item => {
+                        // BOGO discount is 50% of the unit price
+                        const basePrice = item.unitPrice / 2;
+                        totalExpectedDiscount += basePrice;
                     });
+
+                    const multiBogoMatch = bogoCandidates.length >= 2 && Math.abs(offerAbs - totalExpectedDiscount) < 2.0;
+
+                    logDebug(` Multi-BOGO Check:`);
+                    logDebug(`  - Total expected discount (sum of 50% of each): £${totalExpectedDiscount.toFixed(2)}`);
+                    logDebug(`  - Offer value: £${offerAbs.toFixed(2)}`);
+                    logDebug(`  - Difference: £${Math.abs(offerAbs - totalExpectedDiscount).toFixed(2)}`);
+                    logDebug(`  - Is Multi-BOGO: ${multiBogoMatch}`);
+
+                    let orderItemsDesc = [];
+                    if (multiBogoMatch) {
+                        // MULTI-BOGO: Count each BOGO candidate with HALVED quantity (BOGO pairs, not total items)
+                        logDebug(` ✓ MULTI-BOGO DETECTED! Processing ${bogoCandidates.length} items at HALVED quantity:`);
+                        bogoCandidates.forEach(item => {
+                            const quantityToAdd = Math.floor(item.quantity / 2); // HALVED quantity for BOGO pairs
+                            const itemKey = normalizeItemKey(item.name);
+                            if (!summaryByDate[date].itemCounts[itemKey]) {
+                                summaryByDate[date].itemCounts[itemKey] = 0;
+                            }
+                            const previousCount = summaryByDate[date].itemCounts[itemKey];
+                            summaryByDate[date].itemCounts[itemKey] += quantityToAdd;
+                            summaryByDate[date].totalDiscountedItems += quantityToAdd;
+                            logDebug(`  - "${itemKey}": ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
+                            
+                            let shortName = 'Other';
+                            if (itemKey.includes('Beef')) shortName = 'Beef';
+                            else if (itemKey.includes('Tofu')) shortName = 'Tofu';
+                            else if (itemKey.includes('Pork')) shortName = 'Pork';
+                            orderItemsDesc.push(`${shortName}×${quantityToAdd}`);
+                        });
+                    } else {
+                        // SINGLE-ITEM BOGO: Use bogoEligibleItems
+                        if (bogoEligibleItems.length > 0) {
+                            const sortedItems = [...bogoEligibleItems].sort((a, b) => b.unitPrice - a.unitPrice);
+                            const highestPricedItem = sortedItems[0];
+
+                            logDebug(` Single-item BOGO check for: "${highestPricedItem.name}"`);
+
+                            const unitPrice = highestPricedItem.unitPrice;
+                            const expectedBogoDiscount = unitPrice / 2;
+                            const diff = Math.abs(offerAbs - expectedBogoDiscount);
+
+                            const qtyCheck = highestPricedItem.quantity >= 2;
+                            const diffCheck = diff < 2.0;
+                            const isBogo = qtyCheck && diffCheck;
+
+                            logDebug(` BOGO Calculation Details:`);
+                            logDebug(`  - Offer value: £${offer.value} (Absolute: £${offerAbs.toFixed(2)})`);
+                            logDebug(`  - Unit price of item: £${unitPrice.toFixed(2)}`);
+                            logDebug(`  - Expected BOGO discount (50% of unit): £${expectedBogoDiscount.toFixed(2)}`);
+                            logDebug(`  - Difference: |${offerAbs.toFixed(2)} - ${expectedBogoDiscount.toFixed(2)}| = ${diff.toFixed(4)}`);
+                            logDebug(`  - Quantity check (qty >= 2): ${highestPricedItem.quantity} >= 2 = ${qtyCheck}`);
+                            logDebug(`  - Difference check (diff < 2.0): ${diff.toFixed(4)} < 2.0 = ${diffCheck}`);
+                            logDebug(`  - FINAL BOGO RESULT: ${isBogo}`);
+
+                            // Always use HALVED quantity
+                            const quantityToAdd = Math.floor(highestPricedItem.quantity / 2);
+                            logDebug(` Using HALVED quantity: ${quantityToAdd} (BOGO pairs)`);
+
+                            const itemKey = normalizeItemKey(highestPricedItem.name);
+                            if (!summaryByDate[date].itemCounts[itemKey]) {
+                                summaryByDate[date].itemCounts[itemKey] = 0;
+                            }
+                            const previousCount = summaryByDate[date].itemCounts[itemKey];
+                            summaryByDate[date].itemCounts[itemKey] += quantityToAdd;
+                            summaryByDate[date].totalDiscountedItems += quantityToAdd;
+
+                            logDebug(` AGGREGATION: "${itemKey}" ${previousCount} + ${quantityToAdd} = ${summaryByDate[date].itemCounts[itemKey]}`);
+
+                            let shortName = 'Other';
+                            if (itemKey.includes('Beef')) shortName = 'Beef';
+                            else if (itemKey.includes('Tofu')) shortName = 'Tofu';
+                            else if (itemKey.includes('Pork')) shortName = 'Pork';
+                            orderItemsDesc.push(`${shortName}×${quantityToAdd}`);
+                        } else {
+                            logDebug(` No BOGO-eligible items found (no items with meal combo prefix)`);
+                        }
+                    }
 
                     logDebug(`========== END ORDER ${orderId} ==========\n`);
                 } else {
