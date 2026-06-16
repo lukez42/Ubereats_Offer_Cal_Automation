@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.5
+// @version      9.6
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -2058,10 +2058,11 @@ GM_addStyle(`
                 await cleanupAfterOrder();
 
                 log(` Order ${orderId}: Complete\n`);
-                // Virtualize DOM: Hide the row completely to free up rendering and layout memory
-                // This prevents the browser from crashing with 30,000 DOM elements
+                // Virtualize DOM: Make the row invisible to free up rendering memory but DO NOT set display: none
+                // If we set display: none, the scroll container loses height and infinite scroll breaks!
                 if (row && typeof row.style !== 'undefined') {
-                    row.style.display = 'none';
+                    row.style.opacity = '0.3';
+                    row.style.pointerEvents = 'none';
                     row.style.contentVisibility = 'hidden';
                 }
 
