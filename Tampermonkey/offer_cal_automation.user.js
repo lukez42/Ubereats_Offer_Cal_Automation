@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.6
+// @version      9.7
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -2141,6 +2141,16 @@ GM_addStyle(`
                     if (newRowCount > currentVisibleRows.length) {
                         log(` Scroll successful: loaded ${newRowCount - currentVisibleRows.length} new rows!`);
                         newRowsLoaded = true;
+                        
+                        // NEW LOGIC: Now that the new batch is loaded, completely hide the old batch
+                        // This prevents the browser from crashing with thousands of DOM nodes
+                        // while ensuring the infinite scroll still triggered successfully.
+                        currentVisibleRows.forEach(oldRow => {
+                            if (oldRow && typeof oldRow.style !== 'undefined') {
+                                oldRow.style.display = 'none';
+                            }
+                        });
+                        
                         break;
                     }
                     
