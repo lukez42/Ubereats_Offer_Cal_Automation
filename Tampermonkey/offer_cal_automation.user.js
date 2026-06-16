@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.3
+// @version      9.4
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -1205,23 +1205,20 @@ GM_addStyle(`
         }
 
         logDebug(`[Items] itemsContainer has ${itemsContainer.children.length} children`);
+        logDebug(`[Items] Children tags: ${Array.from(itemsContainer.children).map(c => c.tagName).join(', ')}`);
 
         const itemElements = [];
         for (const child of itemsContainer.children) {
             if (child.tagName === 'UL') {
+                logDebug(`[Items] Processing UL with ${child.children.length} children`);
                 for (const li of child.children) {
                     if (li.tagName === 'LI') {
-                        itemElements.push({
-                            modifiersContainer: li,
-                            header: li.querySelector('div[role="button"]') || li.firstElementChild
-                        });
+                        // Search the entire LI for the item data, not just a narrow header
+                        itemElements.push({ container: li });
                     }
                 }
             } else if (child.tagName === 'DIV') {
-                itemElements.push({
-                    modifiersContainer: null,
-                    header: child
-                });
+                itemElements.push({ container: child });
             } else {
                 logDebug(`[Items] Skipping child due to unknown tagName: ${child.tagName}`);
             }
@@ -1229,72 +1226,116 @@ GM_addStyle(`
 
         logDebug(`[Items] Found ${itemElements.length} potential items to extract`);
 
-        for (const item of itemElements) {
-            const header = item.header;
-            const modifiersContainer = item.modifiersContainer;
+        for (let idx = 0; idx < itemElements.length; idx++) {
+            const container = itemElements[idx].container;
 
-            if (!header) continue;
+            if (!container) continue;
 
-            const quantityLabel = header.querySelector('div[data-baseweb="typo-labelsmall"], span[data-baseweb="typo-labelsmall"]');
+            // Search the ENTIRE container for quantity, name, price - not just a narrow header
+            // For items with accordions, the button contains the summary. For items without, the data is directly in the LI/DIV.
+            const searchRoot = container;
+
+            // Strategy 1: Find quantity via data-baseweb="typo-labelsmall"
+            let quantityLabel = null;
+            const allLabelSmalls = searchRoot.querySelectorAll('div[data-baseweb="typo-labelsmall"], span[data-baseweb="typo-labelsmall"]');
+            for (const el of allLabelSmalls) {
+                const txt = el.textContent.trim();
+                // The quantity label should be a pure number, not a modifier quantity inside a nested category
+                // Check that this element is NOT inside a modifier section (which has typo-paragraphsmall category headers)
+                const isInsideModifierSection = el.closest('div._qw') || false;
+                if (/^\d+$/.test(txt) && !isInsideModifierSection) {
+                    quantityLabel = el;
+                    break;
+                }
+            }
+
             if (!quantityLabel) {
-                logDebug(`[Items] Skipping: no quantityLabel found in header`);
+                logDebug(`[Items][${idx}] Skipping: no quantityLabel found. LabelSmall candidates: ${allLabelSmalls.length}`);
+                if (allLabelSmalls.length > 0) {
+                    logDebug(`[Items][${idx}]   Candidate texts: ${Array.from(allLabelSmalls).map(e => `"${e.textContent.trim()}"`).join(', ')}`);
+                }
                 continue;
             }
 
             const quantity = parseInt(quantityLabel.textContent.trim());
             if (isNaN(quantity)) {
-                logDebug(`[Items] Skipping: quantity is NaN`);
+                logDebug(`[Items][${idx}] Skipping: quantity is NaN from "${quantityLabel.textContent.trim()}"`);
                 continue;
             }
 
-            const itemNameEl = header.querySelector('div[data-baseweb="typo-labelmedium"], span[data-baseweb="typo-labelmedium"]');
+            // Strategy 2: Find item name via data-baseweb="typo-labelmedium"
+            // The item name is at the TOP level of the item, not inside modifier sections
+            let itemNameEl = null;
+            const allLabelMediums = searchRoot.querySelectorAll('div[data-baseweb="typo-labelmedium"], span[data-baseweb="typo-labelmedium"]');
+            for (const el of allLabelMediums) {
+                // Skip elements that are inside modifier option sections
+                const isInsideModifierSection = el.closest('div._qw') || false;
+                if (!isInsideModifierSection) {
+                    itemNameEl = el;
+                    break;
+                }
+            }
+
             if (!itemNameEl) {
-                logDebug(`[Items] Skipping: no itemNameEl found in header`);
+                logDebug(`[Items][${idx}] Skipping: no itemNameEl found. LabelMedium candidates: ${allLabelMediums.length}`);
+                if (allLabelMediums.length > 0) {
+                    logDebug(`[Items][${idx}]   Candidate texts: ${Array.from(allLabelMediums).map(e => `"${e.textContent.trim()}"`).join(', ')}`);
+                }
                 continue;
             }
 
             const itemName = itemNameEl.textContent.trim();
 
-            const priceEl = header.querySelector('[data-baseweb="typo-monoparagraphmedium"]');
+            // Strategy 3: Find price - look near the quantity/name, not deep in modifier sections
+            // The item-level price element should be a sibling/ancestor of the name, not inside a modifier block
+            let priceEl = null;
+            const allPrices = searchRoot.querySelectorAll('[data-baseweb="typo-monoparagraphmedium"]');
+            for (const el of allPrices) {
+                const isInsideModifierSection = el.closest('div._qw') || false;
+                if (!isInsideModifierSection) {
+                    priceEl = el;
+                    break;
+                }
+            }
+            
             const priceText = priceEl ? priceEl.textContent.trim() : "";
             const priceValue = parseFloat(priceText.replace(/[^\d.-]/g, ''));
 
-            logDebug(`[Items] Successfully parsed item: Qty=${quantity}, Name="${itemName}", Price=${priceValue}`);
+            logDebug(`[Items][${idx}] Successfully parsed item: Qty=${quantity}, Name="${itemName}", Price=${priceValue}`);
 
             if (/^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(itemName)) {
-                logDebug(`[Items] Skipping: itemName matched timestamp pattern`);
+                logDebug(`[Items][${idx}] Skipping: itemName matched timestamp pattern`);
                 continue;
             }
 
             const modifiers = [];
-            if (modifiersContainer) {
-                const categoryTitles = modifiersContainer.querySelectorAll('p[data-baseweb="typo-paragraphsmall"]');
-                categoryTitles.forEach(catTitleEl => {
-                    const categoryName = catTitleEl.textContent.trim();
-                    const categoryBlock = catTitleEl.closest('div._qw') || catTitleEl.parentElement.parentElement;
-                    if (!categoryBlock) return;
+            // Look for modifier sections within this container
+            const categoryTitles = container.querySelectorAll('p[data-baseweb="typo-paragraphsmall"]');
+            categoryTitles.forEach(catTitleEl => {
+                const categoryName = catTitleEl.textContent.trim();
+                const categoryBlock = catTitleEl.closest('div._qw') || catTitleEl.parentElement.parentElement;
+                if (!categoryBlock) return;
+                
+                const optionNameEls = categoryBlock.querySelectorAll('div[data-baseweb="typo-labelmedium"]');
+                optionNameEls.forEach(optNameEl => {
+                    const optName = optNameEl.textContent.trim();
+                    const optContainer = optNameEl.closest('div._af') || optNameEl.parentElement;
                     
-                    const optionNameEls = categoryBlock.querySelectorAll('div[data-baseweb="typo-labelmedium"]');
-                    optionNameEls.forEach(optNameEl => {
-                        const optName = optNameEl.textContent.trim();
-                        const optContainer = optNameEl.closest('div._af') || optNameEl.parentElement;
-                        
-                        const optQtyEl = optContainer.querySelector('div[data-baseweb="typo-labelsmall"]');
-                        const optQty = optQtyEl ? parseInt(optQtyEl.textContent.trim()) || 1 : 1;
-                        
-                        const optRow = optContainer.parentElement;
-                        const optPriceEl = optRow.querySelector('[data-baseweb="typo-monoparagraphmedium"]');
-                        const optPrice = optPriceEl ? parseFloat(optPriceEl.textContent.replace(/[^\d.-]/g, '')) : 0;
-                        
-                        modifiers.push({
-                            category: categoryName,
-                            name: optName,
-                            quantity: optQty,
-                            priceValue: isNaN(optPrice) ? 0 : optPrice
-                        });
+                    const optQtyEl = optContainer.querySelector('div[data-baseweb="typo-labelsmall"]');
+                    const optQty = optQtyEl ? parseInt(optQtyEl.textContent.trim()) || 1 : 1;
+                    
+                    const optRow = optContainer.parentElement;
+                    const optPriceEl = optRow.querySelector('[data-baseweb="typo-monoparagraphmedium"]');
+                    const optPrice = optPriceEl ? parseFloat(optPriceEl.textContent.replace(/[^\d.-]/g, '')) : 0;
+                    
+                    modifiers.push({
+                        category: categoryName,
+                        name: optName,
+                        quantity: optQty,
+                        priceValue: isNaN(optPrice) ? 0 : optPrice
                     });
                 });
-            }
+            });
 
             items.push({
                 name: itemName,
