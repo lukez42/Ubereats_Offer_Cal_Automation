@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.14
+// @version      9.15
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -1707,13 +1707,15 @@ GM_addStyle(`
     }
 
     // --- 4. Main function to process the orders ---
-    async function processOrders() {
+    async function processOrders(eventOrResume = false) {
+        const isResume = eventOrResume === true; // Strict check to ignore MouseEvent from click listener
+        
         const button = document.getElementById('fetch-offer-data-btn');
         if (button.classList.contains('loading')) return;
         button.classList.add('loading');
 
         // Show processing overlay with green glow
-        showProcessingOverlay('Initializing...');
+        showProcessingOverlay(isResume ? 'Resuming...' : 'Initializing...');
 
         // Request Wake Lock to prevent screen from sleeping during scraping
         let wakeLock = null;
@@ -1729,26 +1731,27 @@ GM_addStyle(`
             console.warn('[UberEats Script] Wake Lock not supported or failed:', err);
         }
 
-        // Always reset all state at the start of a new run.
-        // Crash/page-reload recovery is handled separately above via isRecoveryMode() + sessionStorage.
-        // The previous check (window.processedOrderIds.size > 0) was a bug: it would treat
-        // leftover state from the last run as a "resume" signal, causing stale results when
-        // the user changes the date range and clicks Fetch again in the same session.
-        window.orderOfferData = {};
-        window.orderIssueData = {};
-        window.orderItemsData = {};
-        window.orderDateData = {};
-        window.orderShopData = {};
-        window.orderTimeData = {};
-        window.orderCustomerData = {};
-        window.orderFulfilmentData = {};
-        window.orderCourierData = {};
-        window.orderSubtotalData = {};
-        window.orderFinancialsData = {};
-        window.orderCancelledData = {};
-        window.orderItemsDetected = {};
-        window.processedOrderIds = new Set();
-        log(' State reset — starting fresh run.');
+        if (!isResume) {
+            // Always reset all state at the start of a new run.
+            window.orderOfferData = {};
+            window.orderIssueData = {};
+            window.orderItemsData = {};
+            window.orderDateData = {};
+            window.orderShopData = {};
+            window.orderTimeData = {};
+            window.orderCustomerData = {};
+            window.orderFulfilmentData = {};
+            window.orderCourierData = {};
+            window.orderSubtotalData = {};
+            window.orderFinancialsData = {};
+            window.orderCancelledData = {};
+            window.orderItemsDetected = {};
+            window.processedOrderIds = new Set();
+            log(' State reset — starting fresh run.');
+        } else {
+            log(' Resuming run — state preserved.');
+        }
+
         let totalOfferSum = 0;
         let totalSubtotalSum = 0;
         let ordersWithOffers = 0;
@@ -1812,7 +1815,13 @@ GM_addStyle(`
                 if (!orderIdEl) continue;
 
                 const orderId = (orderIdEl.textContent || '').trim();
-                if (!orderId || window.processedOrderIds.has(orderId)) continue;
+                if (!orderId) continue;
+                
+                // If resuming from a crash/reload, rapidly hide already processed rows
+                if (window.processedOrderIds.has(orderId)) {
+                    row.classList.add('resai-processed');
+                    continue;
+                }
 
                 // Check for crash loop BEFORE processing
                 const cachedCrashOrderId = localStorage.getItem('ubereats_active_processing_order');
