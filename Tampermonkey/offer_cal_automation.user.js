@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.13
+// @version      9.14
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -100,6 +100,13 @@ GM_addStyle(`
         padding: 16px 16px 16px 0;
         vertical-align: top;
         color: #A6A6A6;
+    }
+    
+    /* High Performance Computing: DOM Render Optimisation
+       Removes processed rows from layout calculations while preserving scroll height */
+    tr.resai-processed {
+        content-visibility: hidden;
+        contain-intrinsic-size: 80px; 
     }
     
     /* Active Row Highlight - Performance optimized */
@@ -1637,8 +1644,9 @@ GM_addStyle(`
         if (!SHOW_DEBUG_COLUMNS) return;
         if (!document.querySelector('.th-offer')) return;
 
-        const orderRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
+        const orderRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]:not(.resai-debug-processed)');
         orderRows.forEach(row => {
+            row.classList.add('resai-debug-processed');
             const subtotalCell = row.lastElementChild;
             if (!subtotalCell) return;
 
@@ -1792,9 +1800,9 @@ GM_addStyle(`
         let lastActiveRow = null;
 
         while (window.processedOrderIds.size < totalOrderCount && stuckCount < maxStuckAttempts) {
-            // 1. Get currently visible rows
+            // 1. Get currently visible rows (HPC: exclude already processed rows to prevent O(N^2) DOM query scaling)
             updateNewRows(); // Ensure new rows have proper cells
-            const visibleRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]');
+            const visibleRows = document.querySelectorAll('tr[data-testid="ordersRevamped-row"]:not(.resai-processed)');
 
             let processedThisRound = 0;
 
@@ -2084,6 +2092,9 @@ GM_addStyle(`
                 window.processedOrderIds.add(orderId);
                 log(` Order ${orderId}: ✓ Added to processedOrderIds (total: ${window.processedOrderIds.size})`);
                 processedThisRound++;
+                
+                // HPC DOM Optimization: Mark as processed to hide from layout rendering and prevent O(N^2) query loops
+                row.classList.add('resai-processed');
 
                 // Close the drawer
                 let closeButton = null;
