@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.15
+// @version      9.16
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -650,6 +650,7 @@ GM_addStyle(`
                 orderFulfilmentData: window.orderFulfilmentData || {},
                 orderCourierData: window.orderCourierData || {},
                 orderCancelledData: window.orderCancelledData || {},
+                scriptRunStartTime: window.scriptRunStartTime || Date.now(),
                 timestamp: Date.now()
             };
             
@@ -1747,6 +1748,7 @@ GM_addStyle(`
             window.orderCancelledData = {};
             window.orderItemsDetected = {};
             window.processedOrderIds = new Set();
+            window.scriptRunStartTime = Date.now();
             log(' State reset — starting fresh run.');
         } else {
             log(' Resuming run — state preserved.');
@@ -2816,6 +2818,15 @@ GM_addStyle(`
 
         const downloadLinkHTML = `<div style="margin-top: 15px; text-align: center;"><a href="${csvUrl}" download="${fileName}" style="padding: 12px 24px; background: #000; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">📥 Download Full Order CSV</a></div>`;
 
+        let execTimeHTML = '';
+        if (window.scriptRunStartTime) {
+            const diffSeconds = Math.round((Date.now() - window.scriptRunStartTime) / 1000);
+            const mins = Math.floor(diffSeconds / 60);
+            const secs = diffSeconds % 60;
+            const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+            execTimeHTML = `<p style="margin: 4px 0 0 0; color: #888; font-size: 12px;">⏱️ Executed in ${timeStr}</p>`;
+        }
+
         Swal.fire({
             title: 'Calculation Complete!',
             html: `
@@ -2825,6 +2836,7 @@ GM_addStyle(`
                     <h3 style="margin: 8px 0 0 0; color: #333;">£${finalTotalSubtotalSum.toFixed(2)}</h3>
                     <p style="margin: 3px 0; font-size: 13px;">Total Subtotal Sum</p>
                     <p style="margin: 8px 0 0 0; color: #666; font-size: 12px;">${finalTotalDiscountedItems} discounted items · ${finalProcessedCount}/${totalOrderCount} orders</p>
+                    ${execTimeHTML}
                 </div>
                 ${tableHTML}
                 ${syncStatusHTML}
@@ -3010,6 +3022,7 @@ GM_addStyle(`
                         window.orderCourierData = recoveryState.orderCourierData || {};
                         window.orderFinancialsData = recoveryState.orderFinancialsData || {};
                         window.orderCancelledData = recoveryState.orderCancelledData;
+                        window.scriptRunStartTime = recoveryState.scriptRunStartTime || Date.now();
 
                         log(` Restored ${window.processedOrderIds.size} processed orders from recovery state`);
                         clearRecoveryState();
@@ -3018,7 +3031,7 @@ GM_addStyle(`
                             await waitForOrdersToLoad();
                             await new Promise(r => setTimeout(r, 500));
                             log(' Auto-resuming processing after recovery...');
-                            processOrders();
+                            processOrders(true);
                         })();
                     } else {
                         log(' No valid recovery state found, clearing flags');
