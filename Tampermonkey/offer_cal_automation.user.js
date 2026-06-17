@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.11
+// @version      9.12
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -1489,8 +1489,19 @@ GM_addStyle(`
             const endParam = url.searchParams.get('end');
 
             if (startParam) {
-                // startParam is usually a timestamp in milliseconds
-                const startDate = new Date(parseInt(startParam));
+                let startDate;
+                // Check if it's a purely numeric timestamp vs a date string like YYYY-MM-DD
+                if (/^\d+$/.test(startParam)) {
+                    // It's a timestamp (milliseconds or seconds)
+                    const num = parseInt(startParam, 10);
+                    // if it's in seconds (like 1700000000), multiply by 1000
+                    startDate = new Date(num < 10000000000 ? num * 1000 : num);
+                } else {
+                    // It's a date string like YYYY-MM-DD
+                    // We append 'T00:00:00' to avoid timezone offset issues if needed, but new Date(YYYY-MM-DD) works in most cases
+                    startDate = new Date(startParam);
+                }
+                
                 if (!isNaN(startDate.getTime())) {
                     const formattedDate = startDate.toLocaleDateString('en-US', {
                         year: 'numeric',
@@ -2698,13 +2709,15 @@ GM_addStyle(`
                 rows.forEach(order => {
                     order.items.forEach(item => {
                         const safeItemName = '"' + normalizeItemKey(item.name || '').replace(/"/g, '""') + '"';
+                        const safeDate = '"' + (date || '').replace(/"/g, '""') + '"';
+                        const safeTime = '"' + (order.time || '').replace(/"/g, '""') + '"';
                         const safeShop = '"' + (order.shop || '').replace(/"/g, '""') + '"';
                         const safeCustomer = '"' + (order.customer || '').replace(/"/g, '""') + '"';
                         const safeFulfilment = '"' + (order.fulfilment || '').replace(/"/g, '""') + '"';
                         const safeCourier = '"' + (order.courier || '').replace(/"/g, '""') + '"';
                         const safeIssue = '"' + (order.issue || '').replace(/"/g, '""') + '"';
 
-                        let rowStr = `${date},${order.time},${order.id},${safeShop},${safeCustomer},${safeFulfilment},${safeCourier},${safeIssue},${order.subtotalValue}`;
+                        let rowStr = `${safeDate},${safeTime},${order.id},${safeShop},${safeCustomer},${safeFulfilment},${safeCourier},${safeIssue},${order.subtotalValue}`;
                         
                         // Append dynamic metadata
                         for (const k of sortedMetadataKeys) {
