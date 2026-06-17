@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Uber Eats - Get Offer Data (v7 - Patient Scroll & Fetch)
 // @namespace    http://tampermonkey.net/
-// @version      9.12
+// @version      9.13
 // @description  Fetches order history, analyzes discounts, supports ResAI sync, fixes UI DOM extraction, calculates non-combo items, and captures dynamic financial fields.
 // @author       Luke
 // @match        https://merchants.ubereats.com/manager/*
@@ -292,6 +292,37 @@ GM_addStyle(`
             content: '...' !important;
         }
     }
+    
+    /* Mobile / Tablet Responsive Adjustments */
+    @media (max-width: 768px) {
+        #fetch-offer-data-btn {
+            bottom: 15px;
+            right: 15px;
+            padding: 10px 16px;
+            font-size: 14px;
+        }
+        
+        #resai-native-modal > div {
+            padding: 20px 24px !important;
+            width: 95% !important;
+            box-sizing: border-box !important;
+        }
+    }
+    @media (max-width: 480px) {
+        #fetch-offer-data-btn {
+            bottom: 10px;
+            right: 10px;
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+        
+        #resai-native-modal > div {
+            padding: 16px 20px !important;
+            width: 100% !important;
+            border-radius: 12px !important;
+            box-sizing: border-box !important;
+        }
+    }
 `);
 
 (function () {
@@ -329,6 +360,7 @@ GM_addStyle(`
                 box.style.cssText = `
                     background:#fff;border-radius:16px;padding:28px 32px;
                     max-width:${options.width || '520px'};width:100%;
+                    box-sizing:border-box;
                     box-shadow:0 20px 60px rgba(0,0,0,0.3);font-family:sans-serif;
                     position:relative;
                 `;
@@ -2552,9 +2584,9 @@ GM_addStyle(`
 
         // Build HTML table
         let tableHTML = `
-            <div style="text-align: left; max-height: 400px; overflow-y: auto;">
+            <div style="text-align: left; max-height: 400px; overflow-y: auto; overflow-x: auto; width: 100%;">
                 <h3 style="margin-top: 0;">Summary by Date</h3>
-                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <table style="width: 100%; min-width: 400px; border-collapse: collapse; font-size: 12px;">
                     <thead>
                         <tr style="background-color: #f5f5f5; border-bottom: 2px solid #ddd;">
                             <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Date</th>
